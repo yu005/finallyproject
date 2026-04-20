@@ -49,6 +49,13 @@ public sealed class HandVisualizer : MonoBehaviour
     [SerializeField, Range(0.02f, 0.8f)] float _gestureLostGraceSeconds = 0.28f;
     [SerializeField, Range(0.02f, 1.0f)] float _placementDecayPerSecond = 0.35f;
     [SerializeField, Range(0.05f, 0.6f)] float _centerSmoothing = 0.20f;
+    [SerializeField, Range(0.3f, 2.0f)] float _rhythmTextShowSeconds = 0.75f;
+    [SerializeField] bool _enableRhythmAudio = true;
+    [SerializeField, Range(0f, 1f)] float _rhythmAudioVolume = 0.9f;
+    [SerializeField] AudioClip _rhythmCount1Clip = null;
+    [SerializeField] AudioClip _rhythmCount2Clip = null;
+    [SerializeField] AudioClip _rhythmCount3Clip = null;
+    [SerializeField] AudioClip _rhythmFallbackClip = null;
 
     [SerializeField] bool _showCropPreview = false;
     [SerializeField] bool _drawLandmarks = true;
@@ -78,6 +85,7 @@ public sealed class HandVisualizer : MonoBehaviour
     GameObject _grassObject;
 
     Camera _mainCamera;
+    AudioSource _rhythmAudioSource;
 
     enum RitualState
     {
@@ -109,6 +117,8 @@ public sealed class HandVisualizer : MonoBehaviour
     float _placeAnimTimer;
     int _placeDetectedCount;
     bool _placeNeedRearm;
+    string _rhythmText = "";
+    float _rhythmTextTimer;
 
     HandSignal[] _hands;
     bool[] _hasPrevCenter;
@@ -133,6 +143,7 @@ public sealed class HandVisualizer : MonoBehaviour
     {
         _mainCamera = Camera.main;
         EnsureRuntimeArrays();
+        EnsureRhythmAudioSource();
 
         _pipeline = new HandPipeline(_resources);
         _material = (new Material(_keyPointShader), new Material(_handRegionShader));
@@ -192,6 +203,9 @@ public sealed class HandVisualizer : MonoBehaviour
     void LateUpdate()
     {
         if (_pipeline == null || _source == null || _source.Texture == null) return;
+
+        if (_rhythmTextTimer > 0)
+            _rhythmTextTimer = Mathf.Max(0, _rhythmTextTimer - Time.deltaTime);
 
         _pipeline.ProcessImage(_source.Texture);
 
@@ -262,6 +276,25 @@ public sealed class HandVisualizer : MonoBehaviour
             $"追蹤: {trackedCount}/2 | 右手 開掌比: {_opennessRatio[1]:F2} 伸指: {_extendedCount[1]}/5 速度: {_smoothedSpeed[1]:F2} 開掌: {(_openPalmLatch[1] ? "是" : "否")} | 下移次數: {_placeDetectedCount}/{Mathf.Max(1, _placeRequiredDetections)}（按 R 重置）",
             hintStyle
         );
+
+        if (_rhythmTextTimer > 0 && !string.IsNullOrEmpty(_rhythmText))
+        {
+            var alpha = Mathf.Clamp01(_rhythmTextTimer / Mathf.Max(_rhythmTextShowSeconds, 0.001f));
+            var rhythmStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 42,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                normal = { textColor = new Color(1f, 0.96f, 0.72f, alpha) }
+            };
+
+            GUI.Label
+            (
+                new Rect((Screen.width - 640) * 0.5f, Screen.height * 0.16f, 640, 80),
+                _rhythmText,
+                rhythmStyle
+            );
+        }
     }
 
     #endregion
@@ -440,12 +473,14 @@ public sealed class HandVisualizer : MonoBehaviour
                         if (_placingMaxDrop >= _placeDetectDownDistance)
                         {
                             _placeDetectedCount++;
+                            var isLastBeat = _placeDetectedCount >= Mathf.Max(1, _placeRequiredDetections);
+                            TriggerRhythmCue(_placeDetectedCount, isLastBeat);
                             _placeNeedRearm = true;
                             _placingMaxDrop = 0;
                             _referenceYLeft = left.center.y;
                             _referenceYRight = right.center.y;
 
-                            if (_placeDetectedCount >= Mathf.Max(1, _placeRequiredDetections))
+                            if (isLastBeat)
                             {
                                 _state = RitualState.PlaceAnimating;
                                 _placeAnimTimer = 0;
@@ -549,6 +584,8 @@ public sealed class HandVisualizer : MonoBehaviour
         _placeAnimTimer = 0;
         _placeDetectedCount = 0;
         _placeNeedRearm = false;
+        _rhythmText = "";
+        _rhythmTextTimer = 0;
 
         for (var i = 0; i < _openPalmLatch.Length; i++)
         {
@@ -559,6 +596,40 @@ public sealed class HandVisualizer : MonoBehaviour
         }
 
         _status = "已重置，請再次伸出雙手。";
+    }
+
+    void EnsureRhythmAudioSource()
+    {
+        _rhythmAudioSource = GetComponent<AudioSource>();
+        if (_rhythmAudioSource == null)
+            _rhythmAudioSource = gameObject.AddComponent<AudioSource>();
+
+        _rhythmAudioSource.playOnAwake = false;
+        _rhythmAudioSource.loop = false;
+        _rhythmAudioSource.spatialBlend = 0;
+        _rhythmAudioSource.volume = Mathf.Clamp01(_rhythmAudioVolume);
+    }
+
+    AudioClip GetRhythmClip(int count)
+    {
+        if (count == 1 && _rhythmCount1Clip != null) return _rhythmCount1Clip;
+        if (count == 2 && _rhythmCount2Clip != null) return _rhythmCount2Clip;
+        if (count >= 3 && _rhythmCount3Clip != null) return _rhythmCount3Clip;
+        return _rhythmFallbackClip;
+    }
+
+    void TriggerRhythmCue(int count, bool finalBeat)
+    {
+        var clampedCount = Mathf.Clamp(count, 1, Mathf.Max(1, _placeRequiredDetections));
+        _rhythmText = finalBeat ? $"第{clampedCount}次，安放完成！" : $"第{clampedCount}次";
+        _rhythmTextTimer = _rhythmTextShowSeconds;
+
+        if (!_enableRhythmAudio || _rhythmAudioSource == null) return;
+
+        _rhythmAudioSource.volume = Mathf.Clamp01(_rhythmAudioVolume);
+        var clip = GetRhythmClip(clampedCount);
+        if (clip != null)
+            _rhythmAudioSource.PlayOneShot(clip, Mathf.Clamp01(_rhythmAudioVolume));
     }
 
     #endregion
