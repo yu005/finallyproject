@@ -42,6 +42,7 @@ public sealed class HandVisualizer : MonoBehaviour
     [SerializeField, Range(0.0f, 0.2f)] float _openPalmHysteresis = 0.08f;
     [SerializeField, Range(0.02f, 0.4f)] float _liftStartDistance = 0.10f;
     [SerializeField, Range(0.08f, 0.6f)] float _liftFullDistance = 0.30f;
+    [SerializeField, Range(0.003f, 0.08f)] float _placeDetectDownDistance = 0.018f;
     [SerializeField, Range(0.02f, 0.8f)] float _gestureLostGraceSeconds = 0.28f;
     [SerializeField, Range(0.02f, 1.0f)] float _placementDecayPerSecond = 0.35f;
     [SerializeField, Range(0.05f, 0.6f)] float _centerSmoothing = 0.20f;
@@ -386,7 +387,7 @@ public sealed class HandVisualizer : MonoBehaviour
         switch (_state)
         {
             case RitualState.WaitingPlace:
-                _status = "雙手維持開掌，向下移動安放種子。";
+                _status = "雙手維持開掌，稍微向下就可安放種子。";
                 _placeTimer = Mathf.Max(0, _placeTimer - Time.deltaTime * 2);
                 if (bothPlacement)
                 {
@@ -400,21 +401,22 @@ public sealed class HandVisualizer : MonoBehaviour
                 break;
 
             case RitualState.Placing:
-                _status = "安放中…請持續雙手向下移動。";
+                _status = "安放中…偵測到下移就會落地。";
                 if (bothPlacement)
                 {
                     _placeLostTimer = 0;
 
                     var dropLeft = _referenceYLeft - left.center.y;
                     var dropRight = _referenceYRight - right.center.y;
-                    var drop = Mathf.Min(dropLeft, dropRight);
+                    var drop = Mathf.Max(dropLeft, dropRight);
 
                     _placingMaxDrop = Mathf.Max(_placingMaxDrop, drop);
 
-                    var target = Mathf.InverseLerp(_liftStartDistance, _liftFullDistance, _placingMaxDrop);
-                    _placeTimer = Mathf.Clamp01(target) * _placeHoldSeconds;
+                    var downDetected = _placingMaxDrop >= _placeDetectDownDistance;
+                    var target = downDetected ? 1.0f : Mathf.Clamp01(_placingMaxDrop / Mathf.Max(_placeDetectDownDistance, 0.0001f));
+                    _placeTimer = target * _placeHoldSeconds;
 
-                    if (target >= 0.995f)
+                    if (downDetected)
                     {
                         _placeTimer = _placeHoldSeconds;
                         _state = RitualState.WaitingGrow;
