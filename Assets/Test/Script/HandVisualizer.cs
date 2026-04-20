@@ -404,7 +404,6 @@ public sealed class HandVisualizer : MonoBehaviour
                     _placingMaxDrop = 0;
                     _placeLostTimer = 0;
                     _placeAnimTimer = 0;
-                    _placeDetectedCount = 0;
                     _placeNeedRearm = false;
                     _placeTimer = 0;
                 }
@@ -414,6 +413,14 @@ public sealed class HandVisualizer : MonoBehaviour
                 _status = $"安放手勢中…請向下 {Mathf.Max(0, _placeRequiredDetections - _placeDetectedCount)} 次。";
                 if (bothPlacement)
                 {
+                    if (_placeLostTimer > 0)
+                    {
+                        _referenceYLeft = left.center.y;
+                        _referenceYRight = right.center.y;
+                        _placingMaxDrop = 0;
+                        _placeNeedRearm = false;
+                    }
+
                     _placeLostTimer = 0;
 
                     if (!_placeNeedRearm)
@@ -457,16 +464,12 @@ public sealed class HandVisualizer : MonoBehaviour
                 else
                 {
                     _placeLostTimer += Time.deltaTime;
-                    _status = "偵測短暫中斷，請維持姿勢回到畫面。";
+                    _placeTimer = Mathf.Max(0, _placeTimer - Time.deltaTime * _placementDecayPerSecond);
 
                     if (_placeLostTimer >= _gestureLostGraceSeconds)
-                    {
-                        _state = RitualState.WaitingPlace;
-                        _placingMaxDrop = 0;
-                        _placeDetectedCount = 0;
-                        _placeNeedRearm = false;
-                        _status = "偵測暫時不穩，請雙手回到畫面後再向下安放。";
-                    }
+                        _status = "偵測中斷（進度保留），雙手回到畫面可繼續。";
+                    else
+                        _status = "偵測短暫中斷（進度保留），雙手回到畫面可繼續。";
                 }
                 break;
 
