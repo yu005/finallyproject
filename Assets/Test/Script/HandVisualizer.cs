@@ -86,7 +86,7 @@ public sealed class HandVisualizer : MonoBehaviour
     RitualState _state;
     float _placeTimer;
     float _growth;
-    float _seedX;
+    const float SeedFixedX = 0f;
     readonly float _seedGroundY = -0.33f;
     float _referenceYLeft;
     float _referenceYRight;
@@ -364,7 +364,6 @@ public sealed class HandVisualizer : MonoBehaviour
                     _state = RitualState.Placing;
                     _referenceYLeft = left.center.y;
                     _referenceYRight = right.center.y;
-                    _seedX = (left.center.x + right.center.x) * 0.5f;
                     _placeTimer = 0;
                 }
                 break;
@@ -373,8 +372,6 @@ public sealed class HandVisualizer : MonoBehaviour
                 _status = "安放中…請持續雙手向下移動。";
                 if (bothPlacement)
                 {
-                    _seedX = Mathf.Lerp(_seedX, (left.center.x + right.center.x) * 0.5f, 0.15f);
-
                     var dropLeft = _referenceYLeft - left.center.y;
                     var dropRight = _referenceYRight - right.center.y;
                     var drop = Mathf.Min(dropLeft, dropRight);
@@ -441,7 +438,6 @@ public sealed class HandVisualizer : MonoBehaviour
         _state = RitualState.WaitingPlace;
         _placeTimer = 0;
         _growth = 0;
-        _seedX = 0;
         _referenceYLeft = 0;
         _referenceYRight = 0;
 
@@ -526,41 +522,35 @@ public sealed class HandVisualizer : MonoBehaviour
 
     Material CreateGroundMaterial()
     {
-        var baseColor = new Color(0.20f, 0.29f, 0.23f, 1);
+        var baseColor = new Color(0.30f, 0.20f, 0.12f, 1);
 
         if (_soilTexture != null)
         {
-            var shader = Shader.Find("Universal Render Pipeline/Unlit");
-            if (shader == null) shader = Shader.Find("Unlit/Texture");
+            var shader = Shader.Find("Universal Render Pipeline/Lit");
             if (shader == null) shader = Shader.Find("Standard");
+            if (shader == null) shader = Shader.Find("Unlit/Texture");
 
             var mat = new Material(shader);
             ApplyMainColor(mat, baseColor);
             ApplyMainTexture(mat, _soilTexture);
             SetMainTextureTiling(mat, new Vector2(_soilTiling, _soilTiling));
 
-            if (mat.HasProperty("_EmissionColor"))
-            {
-                mat.EnableKeyword("_EMISSION");
-                mat.SetColor("_EmissionColor", new Color(0.08f, 0.05f, 0.03f));
-            }
+            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.08f);
+            if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.0f);
 
             return mat;
         }
         else
         {
-            var shader = Shader.Find("Universal Render Pipeline/Unlit");
-            if (shader == null) shader = Shader.Find("Unlit/Color");
+            var shader = Shader.Find("Universal Render Pipeline/Lit");
             if (shader == null) shader = Shader.Find("Standard");
+            if (shader == null) shader = Shader.Find("Unlit/Color");
 
             var mat = new Material(shader);
             ApplyMainColor(mat, baseColor);
 
-            if (mat.HasProperty("_EmissionColor"))
-            {
-                mat.EnableKeyword("_EMISSION");
-                mat.SetColor("_EmissionColor", new Color(0.10f, 0.06f, 0.04f));
-            }
+            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.03f);
+            if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.0f);
 
             return mat;
         }
@@ -587,10 +577,10 @@ public sealed class HandVisualizer : MonoBehaviour
 
         _seedMaterial = CreateSeedMaterial();
 
-        _groundObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        _groundObject = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         _groundObject.name = "RitualGround";
-        _groundObject.transform.position = new Vector3(0, _seedGroundY - 0.12f, 2.5f);
-        _groundObject.transform.localScale = new Vector3(1.25f, 0.30f, 1);
+        _groundObject.transform.position = new Vector3(0, _seedGroundY - 0.26f, 2.62f);
+        _groundObject.transform.localScale = new Vector3(0.92f, 0.17f, 0.52f);
         _groundObject.GetComponent<MeshRenderer>().material = _groundMaterial;
 
         _seedObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
@@ -620,7 +610,7 @@ public sealed class HandVisualizer : MonoBehaviour
             seedY = _seedGroundY;
         }
 
-        var seedPos = new Vector3(Mathf.Clamp(_seedX, -0.42f, 0.42f), seedY, 2.4f);
+        var seedPos = new Vector3(SeedFixedX, seedY, 2.4f);
 
         if (_seedObject != null)
         {
