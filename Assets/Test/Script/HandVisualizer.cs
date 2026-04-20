@@ -16,7 +16,7 @@ public sealed class HandVisualizer : MonoBehaviour
     [SerializeField] RawImage _mainUI = null;
     [SerializeField] RawImage _cropUI = null;
     [Space]
-    [Header("Final Chapter Ritual (Dual Hand)")]
+    [Header("終章儀式（雙手）")]
     [SerializeField, Range(0.3f, 2.5f)] float _placeHoldSeconds = 1.0f;
     [SerializeField, Range(0.05f, 2.0f)] float _maxHandSpeedForPlace = 0.45f;
     [SerializeField, Range(0.0f, 0.4f)] float _placementHeightLimit = 0.10f;
@@ -108,7 +108,7 @@ public sealed class HandVisualizer : MonoBehaviour
             _mainUI.color = new Color(1, 1, 1, 0.78f);
 
         _state = RitualState.WaitingPlace;
-        _status = "Show both hands to begin the ritual.";
+        _status = "請伸出雙手，準備開始儀式。";
 
         CreateRitualObjects();
     }
@@ -189,7 +189,7 @@ public sealed class HandVisualizer : MonoBehaviour
         GUI.Label
         (
             new Rect(35, 34, 990, 34),
-            $"Final Chapter: Place & Bloom (Dual Hands)  |  {_status}",
+            $"終章：安放與綻放（雙手）  |  {_status}",
             titleStyle
         );
 
@@ -206,14 +206,14 @@ public sealed class HandVisualizer : MonoBehaviour
         GUI.Label
         (
             new Rect(35, 72, 990, 28),
-            $"Tracked: {trackedCount}/2 | Left OpenRatio: {leftOpen:F2} Fingers: {leftExt}/5 Speed: {leftSpeed:F2} Open: {leftLatch}",
+            $"追蹤: {trackedCount}/2 | 左手 開掌比: {leftOpen:F2} 伸指: {leftExt}/5 速度: {leftSpeed:F2} 開掌: {leftLatch}",
             hintStyle
         );
 
         GUI.Label
         (
             new Rect(35, 98, 990, 28),
-            $"Tracked: {trackedCount}/2 | Right OpenRatio: {rightOpen:F2} Fingers: {rightExt}/5 Speed: {rightSpeed:F2} Open: {rightLatch} (Press R to reset)",
+            $"追蹤: {trackedCount}/2 | 右手 開掌比: {rightOpen:F2} 伸指: {rightExt}/5 速度: {rightSpeed:F2} 開掌: {rightLatch}（按 R 重置）",
             hintStyle
         );
     }
@@ -368,7 +368,7 @@ public sealed class HandVisualizer : MonoBehaviour
         switch (_state)
         {
             case RitualState.WaitingPlace:
-                _status = "Hold both palms steady (lower area) to place the seed.";
+                _status = "雙手掌心向下，穩定停留在下方位置以安放種子。";
                 _placeTimer = Mathf.Max(0, _placeTimer - Time.deltaTime * 2);
                 if (bothPlacement)
                 {
@@ -378,7 +378,7 @@ public sealed class HandVisualizer : MonoBehaviour
                 break;
 
             case RitualState.Placing:
-                _status = "Placing... keep both palms steady.";
+                _status = "安放中…請保持雙手穩定。";
                 if (bothPlacement)
                 {
                     _placeTimer += Time.deltaTime;
@@ -390,7 +390,7 @@ public sealed class HandVisualizer : MonoBehaviour
                         _state = RitualState.WaitingGrow;
                         _referenceYLeft = left.center.y;
                         _referenceYRight = right.center.y;
-                        _status = "Seed placed. Lift both hands upward to nourish growth.";
+                        _status = "安放完成，請雙手向上托舉滋養種子。";
                     }
                 }
                 else
@@ -400,7 +400,7 @@ public sealed class HandVisualizer : MonoBehaviour
                 break;
 
             case RitualState.WaitingGrow:
-                _status = "Scoop/lift both hands upward to start sprouting.";
+                _status = "雙手向上托舉，開始發芽。";
                 if (left.tracked && right.tracked)
                 {
                     var liftLeft = left.center.y - _referenceYLeft;
@@ -414,7 +414,7 @@ public sealed class HandVisualizer : MonoBehaviour
                 break;
 
             case RitualState.Growing:
-                _status = "Growing... keep lifting both hands upward.";
+                _status = "生長中…請持續雙手向上托舉。";
                 if (left.tracked && right.tracked)
                 {
                     var liftLeft = left.center.y - _referenceYLeft;
@@ -428,12 +428,12 @@ public sealed class HandVisualizer : MonoBehaviour
                 {
                     _growth = 1;
                     _state = RitualState.Bloomed;
-                    _status = "Bloom complete!";
+                    _status = "綻放完成！";
                 }
                 break;
 
             case RitualState.Bloomed:
-                _status = "Bloomed! Press R to restart.";
+                _status = "已綻放！按 R 可重新開始。";
                 break;
         }
     }
@@ -449,7 +449,7 @@ public sealed class HandVisualizer : MonoBehaviour
         if (_openPalmLatch != null)
             for (var i = 0; i < _openPalmLatch.Length; i++)
                 _openPalmLatch[i] = false;
-        _status = "Reset complete. Show both hands to start again.";
+        _status = "已重置，請再次伸出雙手。";
     }
 
     void CreateRitualObjects()
