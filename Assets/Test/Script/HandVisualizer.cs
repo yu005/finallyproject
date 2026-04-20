@@ -341,11 +341,8 @@ public sealed class HandVisualizer : MonoBehaviour
         };
     }
 
-    bool IsPlacementPose(HandSignal hand)
-      => hand.tracked &&
-         hand.openPalm &&
-         hand.speed <= _maxHandSpeedForPlace &&
-         hand.center.y <= _placementHeightLimit;
+    bool IsPlacementReady(HandSignal hand)
+      => hand.tracked && hand.openPalm;
 
     void UpdateStateMachine(HandSignal left, HandSignal right)
     {
@@ -355,28 +352,37 @@ public sealed class HandVisualizer : MonoBehaviour
             return;
         }
 
-        var bothPlacement = IsPlacementPose(left) && IsPlacementPose(right);
+        var bothPlacement = IsPlacementReady(left) && IsPlacementReady(right);
 
         switch (_state)
         {
             case RitualState.WaitingPlace:
-                _status = "雙手掌心向下，穩定停留在下方位置以安放種子。";
+                _status = "雙手維持開掌，向下移動安放種子。";
                 _placeTimer = Mathf.Max(0, _placeTimer - Time.deltaTime * 2);
                 if (bothPlacement)
                 {
                     _state = RitualState.Placing;
+                    _referenceYLeft = left.center.y;
+                    _referenceYRight = right.center.y;
                     _seedX = (left.center.x + right.center.x) * 0.5f;
+                    _placeTimer = 0;
                 }
                 break;
 
             case RitualState.Placing:
-                _status = "安放中…請保持雙手穩定。";
+                _status = "安放中…請持續雙手向下移動。";
                 if (bothPlacement)
                 {
-                    _placeTimer += Time.deltaTime;
                     _seedX = Mathf.Lerp(_seedX, (left.center.x + right.center.x) * 0.5f, 0.15f);
 
-                    if (_placeTimer >= _placeHoldSeconds)
+                    var dropLeft = _referenceYLeft - left.center.y;
+                    var dropRight = _referenceYRight - right.center.y;
+                    var drop = Mathf.Min(dropLeft, dropRight);
+
+                    var target = Mathf.InverseLerp(_liftStartDistance, _liftFullDistance, drop);
+                    _placeTimer = Mathf.Clamp01(target) * _placeHoldSeconds;
+
+                    if (target >= 0.995f)
                     {
                         _placeTimer = _placeHoldSeconds;
                         _state = RitualState.WaitingGrow;
