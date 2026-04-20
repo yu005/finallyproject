@@ -27,6 +27,10 @@ public sealed class HandVisualizer : MonoBehaviour
     [SerializeField] Texture2D _soilTexture = null;
     [SerializeField] bool _autoLoadSoilFromResources = true;
     [SerializeField, Range(1, 12)] float _soilTiling = 4;
+    [SerializeField] Texture2D _grassTexture = null;
+    [SerializeField] bool _autoLoadGrassFromResources = true;
+    [SerializeField] string _grassResourceName = "GrassPatch";
+    [SerializeField] Color _grassTint = new Color(0.58f, 0.83f, 0.42f, 1);
 
     [Space]
     [Header("終章儀式（雙手）")]
@@ -38,6 +42,9 @@ public sealed class HandVisualizer : MonoBehaviour
     [SerializeField, Range(0.0f, 0.2f)] float _openPalmHysteresis = 0.08f;
     [SerializeField, Range(0.02f, 0.4f)] float _liftStartDistance = 0.10f;
     [SerializeField, Range(0.08f, 0.6f)] float _liftFullDistance = 0.30f;
+    [SerializeField, Range(0.02f, 0.8f)] float _gestureLostGraceSeconds = 0.28f;
+    [SerializeField, Range(0.02f, 1.0f)] float _placementDecayPerSecond = 0.35f;
+    [SerializeField, Range(0.05f, 0.6f)] float _centerSmoothing = 0.20f;
 
     [SerializeField] bool _showCropPreview = false;
     [SerializeField] bool _drawLandmarks = true;
@@ -58,11 +65,13 @@ public sealed class HandVisualizer : MonoBehaviour
     Material _sproutMaterial;
     Material _bloomMaterial;
     Material _groundMaterial;
+    Material _grassMaterial;
 
     GameObject _seedObject;
     GameObject _sproutObject;
     GameObject _bloomObject;
     GameObject _groundObject;
+    GameObject _grassObject;
 
     Camera _mainCamera;
 
@@ -90,10 +99,14 @@ public sealed class HandVisualizer : MonoBehaviour
     readonly float _seedGroundY = -0.33f;
     float _referenceYLeft;
     float _referenceYRight;
+    float _placingMaxDrop;
+    float _placeLostTimer;
 
     HandSignal[] _hands;
     bool[] _hasPrevCenter;
     Vector2[] _prevCenter;
+    bool[] _hasSmoothedCenter;
+    Vector2[] _smoothedCenter;
     float[] _smoothedSpeed;
     float[] _opennessRatio;
     int[] _extendedCount;
@@ -133,6 +146,8 @@ public sealed class HandVisualizer : MonoBehaviour
 
         if (_soilTexture == null && _autoLoadSoilFromResources)
             _soilTexture = TryLoadResourceTexture("Ground091_2K_Color", "Ground091_1K_Color", "Ground091_Color", "Ground091");
+        if (_grassTexture == null && _autoLoadGrassFromResources)
+            _grassTexture = TryLoadResourceTexture(_grassResourceName, "GrassPatch");
 
         _state = RitualState.WaitingPlace;
         _status = "請伸出雙手，準備開始儀式。";
@@ -151,11 +166,13 @@ public sealed class HandVisualizer : MonoBehaviour
         if (_sproutMaterial != null) Destroy(_sproutMaterial);
         if (_bloomMaterial != null) Destroy(_bloomMaterial);
         if (_groundMaterial != null) Destroy(_groundMaterial);
+        if (_grassMaterial != null) Destroy(_grassMaterial);
 
         if (_seedObject != null) Destroy(_seedObject);
         if (_sproutObject != null) Destroy(_sproutObject);
         if (_bloomObject != null) Destroy(_bloomObject);
         if (_groundObject != null) Destroy(_groundObject);
+        if (_grassObject != null) Destroy(_grassObject);
     }
 
     void LateUpdate()
@@ -228,7 +245,7 @@ public sealed class HandVisualizer : MonoBehaviour
         GUI.Label
         (
             new Rect(35, 98, 990, 28),
-            $"追蹤: {trackedCount}/2 | 右手 開掌比: {_opennessRatio[1]:F2} 伸指: {_extendedCount[1]}/5 速度: {_smoothedSpeed[1]:F2} 開掌: {(_openPalmLatch[1] ? "是" : "否")}（按 R 重置）",
+            $"追蹤: {trackedCount}/2 | 右手 開掌比: {_opennessRatio[1]:F2} 伸指: {_extendedCount[1]}/5 速度: {_smoothedSpeed[1]:F2} 開掌: {(_openPalmLatch[1] ? "是" : "否")} | 安放進度: {Mathf.Clamp01(_placeTimer / Mathf.Max(_placeHoldSeconds, 0.0001f)):P0}（按 R 重置）",
             hintStyle
         );
     }
@@ -246,6 +263,7 @@ public sealed class HandVisualizer : MonoBehaviour
         if (!pipelineTracked)
         {
             _hasPrevCenter[handIndex] = false;
+            _hasSmoothedCenter[handIndex] = false;
             _smoothedSpeed[handIndex] = 0;
             _opennessRatio[handIndex] = 0;
             _extendedCount[handIndex] = 0;
@@ -276,12 +294,19 @@ public sealed class HandVisualizer : MonoBehaviour
         if (!tracked)
         {
             _hasPrevCenter[handIndex] = false;
+            _hasSmoothedCenter[handIndex] = false;
             _smoothedSpeed[handIndex] = 0;
             _opennessRatio[handIndex] = 0;
             _extendedCount[handIndex] = 0;
             _openPalmLatch[handIndex] = false;
             return default;
         }
+
+        if (_hasSmoothedCenter[handIndex])
+            center = Vector2.Lerp(_smoothedCenter[handIndex], center, Mathf.Clamp01(_centerSmoothing));
+
+        _smoothedCenter[handIndex] = center;
+        _hasSmoothedCenter[handIndex] = true;
 
         if (_hasPrevCenter[handIndex])
         {
@@ -326,6 +351,10 @@ public sealed class HandVisualizer : MonoBehaviour
         var edgeOn = Mathf.Clamp01(1.0f - Mathf.Abs(palmNormalN.z));
         var adaptiveThreshold = _openPalmRatioThreshold - _edgeOnThresholdRelax * edgeOn;
 
+        // 動作過程抗抖：手速變快時，稍微放寬開掌門檻，避免一下就掉追蹤
+        var speedRelax = Mathf.Clamp01(_smoothedSpeed[handIndex] / Mathf.Max(_maxHandSpeedForPlace, 0.0001f));
+        adaptiveThreshold -= 0.10f * speedRelax;
+
         // 防抖：進入/退出不同門檻
         var openEnter = _opennessRatio[handIndex] >= adaptiveThreshold && extended >= 3;
         var openExit = _opennessRatio[handIndex] >= (adaptiveThreshold - _openPalmHysteresis) && extended >= 2;
@@ -364,6 +393,8 @@ public sealed class HandVisualizer : MonoBehaviour
                     _state = RitualState.Placing;
                     _referenceYLeft = left.center.y;
                     _referenceYRight = right.center.y;
+                    _placingMaxDrop = 0;
+                    _placeLostTimer = 0;
                     _placeTimer = 0;
                 }
                 break;
@@ -372,11 +403,15 @@ public sealed class HandVisualizer : MonoBehaviour
                 _status = "安放中…請持續雙手向下移動。";
                 if (bothPlacement)
                 {
+                    _placeLostTimer = 0;
+
                     var dropLeft = _referenceYLeft - left.center.y;
                     var dropRight = _referenceYRight - right.center.y;
                     var drop = Mathf.Min(dropLeft, dropRight);
 
-                    var target = Mathf.InverseLerp(_liftStartDistance, _liftFullDistance, drop);
+                    _placingMaxDrop = Mathf.Max(_placingMaxDrop, drop);
+
+                    var target = Mathf.InverseLerp(_liftStartDistance, _liftFullDistance, _placingMaxDrop);
                     _placeTimer = Mathf.Clamp01(target) * _placeHoldSeconds;
 
                     if (target >= 0.995f)
@@ -390,7 +425,16 @@ public sealed class HandVisualizer : MonoBehaviour
                 }
                 else
                 {
-                    _state = RitualState.WaitingPlace;
+                    _placeLostTimer += Time.deltaTime;
+                    _placeTimer = Mathf.Max(0, _placeTimer - Time.deltaTime * _placementDecayPerSecond);
+                    _status = "偵測短暫中斷，請維持姿勢回到畫面。";
+
+                    if (_placeLostTimer >= _gestureLostGraceSeconds)
+                    {
+                        _state = RitualState.WaitingPlace;
+                        _placingMaxDrop = 0;
+                        _status = "偵測暫時不穩，請雙手回到畫面後再向下安放。";
+                    }
                 }
                 break;
 
@@ -440,9 +484,16 @@ public sealed class HandVisualizer : MonoBehaviour
         _growth = 0;
         _referenceYLeft = 0;
         _referenceYRight = 0;
+        _placingMaxDrop = 0;
+        _placeLostTimer = 0;
 
         for (var i = 0; i < _openPalmLatch.Length; i++)
+        {
             _openPalmLatch[i] = false;
+            _hasPrevCenter[i] = false;
+            _hasSmoothedCenter[i] = false;
+            _smoothedSpeed[i] = 0;
+        }
 
         _status = "已重置，請再次伸出雙手。";
     }
@@ -461,6 +512,12 @@ public sealed class HandVisualizer : MonoBehaviour
 
         if (_prevCenter == null || _prevCenter.Length != DualHandCount)
             _prevCenter = new Vector2[DualHandCount];
+
+        if (_hasSmoothedCenter == null || _hasSmoothedCenter.Length != DualHandCount)
+            _hasSmoothedCenter = new bool[DualHandCount];
+
+        if (_smoothedCenter == null || _smoothedCenter.Length != DualHandCount)
+            _smoothedCenter = new Vector2[DualHandCount];
 
         if (_smoothedSpeed == null || _smoothedSpeed.Length != DualHandCount)
             _smoothedSpeed = new float[DualHandCount];
@@ -523,37 +580,42 @@ public sealed class HandVisualizer : MonoBehaviour
     Material CreateGroundMaterial()
     {
         var baseColor = new Color(0.30f, 0.20f, 0.12f, 1);
+        var shader = Shader.Find("Universal Render Pipeline/Unlit");
+        if (shader == null) shader = Shader.Find("Unlit/Texture");
+        if (shader == null) shader = Shader.Find("Unlit/Color");
+        if (shader == null) shader = Shader.Find("Standard");
 
         if (_soilTexture != null)
         {
-            var shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null) shader = Shader.Find("Standard");
-            if (shader == null) shader = Shader.Find("Unlit/Texture");
-
             var mat = new Material(shader);
             ApplyMainColor(mat, baseColor);
             ApplyMainTexture(mat, _soilTexture);
             SetMainTextureTiling(mat, new Vector2(_soilTiling, _soilTiling));
-
-            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.08f);
-            if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.0f);
-
             return mat;
         }
         else
         {
-            var shader = Shader.Find("Universal Render Pipeline/Lit");
-            if (shader == null) shader = Shader.Find("Standard");
-            if (shader == null) shader = Shader.Find("Unlit/Color");
-
             var mat = new Material(shader);
             ApplyMainColor(mat, baseColor);
-
-            if (mat.HasProperty("_Smoothness")) mat.SetFloat("_Smoothness", 0.03f);
-            if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.0f);
-
             return mat;
         }
+    }
+
+    Material CreateGrassMaterial()
+    {
+        var shader = Shader.Find("Unlit/Transparent");
+        if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
+        if (shader == null) shader = Shader.Find("Standard");
+
+        var mat = new Material(shader);
+        ApplyMainColor(mat, _grassTint);
+
+        if (_grassTexture != null)
+            ApplyMainTexture(mat, _grassTexture);
+        else
+            Debug.LogWarning("HandVisualizer: 沒有載入到草地貼圖，將使用純色草地。");
+
+        return mat;
     }
 
     Material CreateSeedMaterial()
@@ -572,6 +634,7 @@ public sealed class HandVisualizer : MonoBehaviour
     void CreateRitualObjects()
     {
         _groundMaterial = CreateGroundMaterial();
+        _grassMaterial = CreateGrassMaterial();
         _sproutMaterial = CreateLitMaterial(new Color(0.52f, 0.90f, 0.50f, 1));
         _bloomMaterial = CreateLitMaterial(new Color(0.98f, 0.68f, 0.88f, 1));
 
@@ -582,6 +645,12 @@ public sealed class HandVisualizer : MonoBehaviour
         _groundObject.transform.position = new Vector3(0, _seedGroundY - 0.26f, 2.62f);
         _groundObject.transform.localScale = new Vector3(0.92f, 0.17f, 0.52f);
         _groundObject.GetComponent<MeshRenderer>().material = _groundMaterial;
+
+        _grassObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        _grassObject.name = "RitualGrass";
+        _grassObject.transform.position = new Vector3(0, _seedGroundY - 0.17f, 2.50f);
+        _grassObject.transform.localScale = new Vector3(0.78f, 0.18f, 1);
+        _grassObject.GetComponent<MeshRenderer>().material = _grassMaterial;
 
         _seedObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
         _seedObject.name = "Seed2D";
@@ -620,6 +689,13 @@ public sealed class HandVisualizer : MonoBehaviour
             if (_mainCamera == null) _mainCamera = Camera.main;
             if (_mainCamera != null)
                 _seedObject.transform.rotation = Quaternion.LookRotation(-_mainCamera.transform.forward, _mainCamera.transform.up);
+        }
+
+        if (_grassObject != null)
+        {
+            if (_mainCamera == null) _mainCamera = Camera.main;
+            if (_mainCamera != null)
+                _grassObject.transform.rotation = Quaternion.LookRotation(-_mainCamera.transform.forward, _mainCamera.transform.up);
         }
 
         var stemHeight = Mathf.Lerp(0.001f, 0.28f, _growth);
