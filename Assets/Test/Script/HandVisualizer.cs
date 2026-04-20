@@ -35,6 +35,8 @@ public sealed class HandVisualizer : MonoBehaviour
     [Space]
     [Header("終章儀式（雙手）")]
     [SerializeField, Range(0.3f, 2.5f)] float _placeHoldSeconds = 1.0f;
+    [SerializeField, Range(0.3f, 3.0f)] float _placeDropAnimationSeconds = 1.4f;
+    [SerializeField, Range(2, 6)] int _placeRequiredDetections = 3;
     [SerializeField, Range(0.05f, 2.0f)] float _maxHandSpeedForPlace = 0.45f;
     [SerializeField, Range(0.0f, 0.4f)] float _placementHeightLimit = 0.10f;
     [SerializeField, Range(1.0f, 1.8f)] float _openPalmRatioThreshold = 1.22f;
@@ -43,6 +45,7 @@ public sealed class HandVisualizer : MonoBehaviour
     [SerializeField, Range(0.02f, 0.4f)] float _liftStartDistance = 0.10f;
     [SerializeField, Range(0.08f, 0.6f)] float _liftFullDistance = 0.30f;
     [SerializeField, Range(0.003f, 0.08f)] float _placeDetectDownDistance = 0.018f;
+    [SerializeField, Range(0.002f, 0.06f)] float _placeRearmLiftDistance = 0.010f;
     [SerializeField, Range(0.02f, 0.8f)] float _gestureLostGraceSeconds = 0.28f;
     [SerializeField, Range(0.02f, 1.0f)] float _placementDecayPerSecond = 0.35f;
     [SerializeField, Range(0.05f, 0.6f)] float _centerSmoothing = 0.20f;
@@ -80,6 +83,7 @@ public sealed class HandVisualizer : MonoBehaviour
     {
         WaitingPlace,
         Placing,
+        PlaceAnimating,
         WaitingGrow,
         Growing,
         Bloomed
@@ -102,6 +106,9 @@ public sealed class HandVisualizer : MonoBehaviour
     float _referenceYRight;
     float _placingMaxDrop;
     float _placeLostTimer;
+    float _placeAnimTimer;
+    int _placeDetectedCount;
+    bool _placeNeedRearm;
 
     HandSignal[] _hands;
     bool[] _hasPrevCenter;
@@ -246,7 +253,7 @@ public sealed class HandVisualizer : MonoBehaviour
         GUI.Label
         (
             new Rect(35, 98, 990, 28),
-            $"追蹤: {trackedCount}/2 | 右手 開掌比: {_opennessRatio[1]:F2} 伸指: {_extendedCount[1]}/5 速度: {_smoothedSpeed[1]:F2} 開掌: {(_openPalmLatch[1] ? "是" : "否")} | 安放進度: {Mathf.Clamp01(_placeTimer / Mathf.Max(_placeHoldSeconds, 0.0001f)):P0}（按 R 重置）",
+            $"追蹤: {trackedCount}/2 | 右手 開掌比: {_opennessRatio[1]:F2} 伸指: {_extendedCount[1]}/5 速度: {_smoothedSpeed[1]:F2} 開掌: {(_openPalmLatch[1] ? "是" : "否")} | 下移次數: {_placeDetectedCount}/{Mathf.Max(1, _placeRequiredDetections)}（按 R 重置）",
             hintStyle
         );
     }
@@ -387,7 +394,7 @@ public sealed class HandVisualizer : MonoBehaviour
         switch (_state)
         {
             case RitualState.WaitingPlace:
-                _status = "雙手維持開掌，稍微向下就可安放種子。";
+                _status = $"雙手維持開掌，向下偵測 {Mathf.Max(1, _placeRequiredDetections)} 次後安放種子。";
                 _placeTimer = Mathf.Max(0, _placeTimer - Time.deltaTime * 2);
                 if (bothPlacement)
                 {
@@ -396,47 +403,89 @@ public sealed class HandVisualizer : MonoBehaviour
                     _referenceYRight = right.center.y;
                     _placingMaxDrop = 0;
                     _placeLostTimer = 0;
+                    _placeAnimTimer = 0;
+                    _placeDetectedCount = 0;
+                    _placeNeedRearm = false;
                     _placeTimer = 0;
                 }
                 break;
 
             case RitualState.Placing:
-                _status = "安放中…偵測到下移就會落地。";
+                _status = $"安放手勢中…請向下 {Mathf.Max(0, _placeRequiredDetections - _placeDetectedCount)} 次。";
                 if (bothPlacement)
                 {
                     _placeLostTimer = 0;
 
-                    var dropLeft = _referenceYLeft - left.center.y;
-                    var dropRight = _referenceYRight - right.center.y;
-                    var drop = Mathf.Max(dropLeft, dropRight);
-
-                    _placingMaxDrop = Mathf.Max(_placingMaxDrop, drop);
-
-                    var downDetected = _placingMaxDrop >= _placeDetectDownDistance;
-                    var target = downDetected ? 1.0f : Mathf.Clamp01(_placingMaxDrop / Mathf.Max(_placeDetectDownDistance, 0.0001f));
-                    _placeTimer = target * _placeHoldSeconds;
-
-                    if (downDetected)
+                    if (!_placeNeedRearm)
                     {
-                        _placeTimer = _placeHoldSeconds;
-                        _state = RitualState.WaitingGrow;
-                        _referenceYLeft = left.center.y;
-                        _referenceYRight = right.center.y;
-                        _status = "安放完成，請雙手向上托舉滋養種子。";
+                        var dropLeft = _referenceYLeft - left.center.y;
+                        var dropRight = _referenceYRight - right.center.y;
+                        var drop = Mathf.Max(dropLeft, dropRight);
+
+                        _placingMaxDrop = Mathf.Max(_placingMaxDrop, drop);
+
+                        if (_placingMaxDrop >= _placeDetectDownDistance)
+                        {
+                            _placeDetectedCount++;
+                            _placeNeedRearm = true;
+                            _placingMaxDrop = 0;
+                            _referenceYLeft = left.center.y;
+                            _referenceYRight = right.center.y;
+
+                            if (_placeDetectedCount >= Mathf.Max(1, _placeRequiredDetections))
+                            {
+                                _state = RitualState.PlaceAnimating;
+                                _placeAnimTimer = 0;
+                                _status = "偵測完成，種子安放中…";
+                            }
+                        }
+                    }
+                    else
+                    {
+                        var liftLeft = left.center.y - _referenceYLeft;
+                        var liftRight = right.center.y - _referenceYRight;
+                        var lift = Mathf.Max(liftLeft, liftRight);
+
+                        if (lift >= _placeRearmLiftDistance)
+                        {
+                            _placeNeedRearm = false;
+                            _referenceYLeft = left.center.y;
+                            _referenceYRight = right.center.y;
+                        }
                     }
                 }
                 else
                 {
                     _placeLostTimer += Time.deltaTime;
-                    _placeTimer = Mathf.Max(0, _placeTimer - Time.deltaTime * _placementDecayPerSecond);
                     _status = "偵測短暫中斷，請維持姿勢回到畫面。";
 
                     if (_placeLostTimer >= _gestureLostGraceSeconds)
                     {
                         _state = RitualState.WaitingPlace;
                         _placingMaxDrop = 0;
+                        _placeDetectedCount = 0;
+                        _placeNeedRearm = false;
                         _status = "偵測暫時不穩，請雙手回到畫面後再向下安放。";
                     }
+                }
+                break;
+
+            case RitualState.PlaceAnimating:
+                _status = "安放動畫中…種子正在慢慢落地。";
+                _placeAnimTimer += Time.deltaTime;
+                var placeAnimDuration = Mathf.Max(_placeDropAnimationSeconds, 0.01f);
+                var placeAnimT = Mathf.Clamp01(_placeAnimTimer / placeAnimDuration);
+                _placeTimer = placeAnimT * _placeHoldSeconds;
+
+                if (placeAnimT >= 0.995f)
+                {
+                    _placeTimer = _placeHoldSeconds;
+                    _state = RitualState.WaitingGrow;
+
+                    if (left.tracked) _referenceYLeft = left.center.y;
+                    if (right.tracked) _referenceYRight = right.center.y;
+
+                    _status = "安放完成，請雙手向上托舉滋養種子。";
                 }
                 break;
 
@@ -488,6 +537,9 @@ public sealed class HandVisualizer : MonoBehaviour
         _referenceYRight = 0;
         _placingMaxDrop = 0;
         _placeLostTimer = 0;
+        _placeAnimTimer = 0;
+        _placeDetectedCount = 0;
+        _placeNeedRearm = false;
 
         for (var i = 0; i < _openPalmLatch.Length; i++)
         {
