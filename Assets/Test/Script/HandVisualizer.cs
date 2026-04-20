@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UI;
 using Klak.TestTools;
 using MediaPipe.HandPose;
@@ -15,6 +15,19 @@ public sealed class HandVisualizer : MonoBehaviour
     [Space]
     [SerializeField] RawImage _mainUI = null;
     [SerializeField] RawImage _cropUI = null;
+
+    [Space]
+    [Header("美術素材")]
+    [SerializeField] Texture2D _seedTexture = null;
+    [SerializeField] Color _seedTint = Color.white;
+    [SerializeField] Vector2 _seedSize = new Vector2(0.16f, 0.16f);
+    [SerializeField] bool _autoLoadSeedFromResources = true;
+    [SerializeField] string _seedResourceName = "Seeds_Cereals";
+
+    [SerializeField] Texture2D _soilTexture = null;
+    [SerializeField] bool _autoLoadSoilFromResources = true;
+    [SerializeField, Range(1, 12)] float _soilTiling = 4;
+
     [Space]
     [Header("終章儀式（雙手）")]
     [SerializeField, Range(0.3f, 2.5f)] float _placeHoldSeconds = 1.0f;
@@ -25,6 +38,7 @@ public sealed class HandVisualizer : MonoBehaviour
     [SerializeField, Range(0.0f, 0.2f)] float _openPalmHysteresis = 0.08f;
     [SerializeField, Range(0.02f, 0.4f)] float _liftStartDistance = 0.10f;
     [SerializeField, Range(0.08f, 0.6f)] float _liftFullDistance = 0.30f;
+
     [SerializeField] bool _showCropPreview = false;
     [SerializeField] bool _drawLandmarks = true;
     [SerializeField] bool _invertY = false;
@@ -39,14 +53,18 @@ public sealed class HandVisualizer : MonoBehaviour
 
     HandPipeline _pipeline;
     (Material keys, Material region) _material;
+
     Material _seedMaterial;
     Material _sproutMaterial;
     Material _bloomMaterial;
     Material _groundMaterial;
+
     GameObject _seedObject;
     GameObject _sproutObject;
     GameObject _bloomObject;
     GameObject _groundObject;
+
+    Camera _mainCamera;
 
     enum RitualState
     {
@@ -69,7 +87,7 @@ public sealed class HandVisualizer : MonoBehaviour
     float _placeTimer;
     float _growth;
     float _seedX;
-    float _seedGroundY = -0.33f;
+    readonly float _seedGroundY = -0.33f;
     float _referenceYLeft;
     float _referenceYRight;
 
@@ -92,6 +110,9 @@ public sealed class HandVisualizer : MonoBehaviour
 
     void Start()
     {
+        _mainCamera = Camera.main;
+        EnsureRuntimeArrays();
+
         _pipeline = new HandPipeline(_resources);
         _material = (new Material(_keyPointShader), new Material(_handRegionShader));
 
@@ -107,6 +128,12 @@ public sealed class HandVisualizer : MonoBehaviour
         if (_mainUI != null)
             _mainUI.color = new Color(1, 1, 1, 0.78f);
 
+        if (_seedTexture == null && _autoLoadSeedFromResources)
+            _seedTexture = Resources.Load<Texture2D>(_seedResourceName);
+
+        if (_soilTexture == null && _autoLoadSoilFromResources)
+            _soilTexture = TryLoadResourceTexture("Ground091_2K_Color", "Ground091_1K_Color", "Ground091_Color", "Ground091");
+
         _state = RitualState.WaitingPlace;
         _status = "請伸出雙手，準備開始儀式。";
 
@@ -116,36 +143,34 @@ public sealed class HandVisualizer : MonoBehaviour
     void OnDestroy()
     {
         _pipeline?.Dispose();
+
         if (_material.keys != null) Destroy(_material.keys);
         if (_material.region != null) Destroy(_material.region);
 
-        Destroy(_seedMaterial);
-        Destroy(_sproutMaterial);
-        Destroy(_bloomMaterial);
-        Destroy(_groundMaterial);
+        if (_seedMaterial != null) Destroy(_seedMaterial);
+        if (_sproutMaterial != null) Destroy(_sproutMaterial);
+        if (_bloomMaterial != null) Destroy(_bloomMaterial);
+        if (_groundMaterial != null) Destroy(_groundMaterial);
 
-        if (_seedObject) Destroy(_seedObject);
-        if (_sproutObject) Destroy(_sproutObject);
-        if (_bloomObject) Destroy(_bloomObject);
-        if (_groundObject) Destroy(_groundObject);
+        if (_seedObject != null) Destroy(_seedObject);
+        if (_sproutObject != null) Destroy(_sproutObject);
+        if (_bloomObject != null) Destroy(_bloomObject);
+        if (_groundObject != null) Destroy(_groundObject);
     }
 
     void LateUpdate()
     {
         if (_pipeline == null || _source == null || _source.Texture == null) return;
-        EnsureRuntimeArrays();
 
         _pipeline.ProcessImage(_source.Texture);
 
         if (_mainUI != null) _mainUI.texture = _source.Texture;
         if (_cropUI != null) _cropUI.texture = _source.Texture;
 
-        for (var i = 0; i < Mathf.Min(DualHandCount, _hands.Length); i++)
+        for (var i = 0; i < DualHandCount; i++)
             _hands[i] = EvaluateHand(i);
 
-        var left = _hands.Length > 0 ? _hands[0] : default;
-        var right = _hands.Length > 1 ? _hands[1] : default;
-        UpdateStateMachine(left, right);
+        UpdateStateMachine(_hands[0], _hands[1]);
         UpdateRitualVisuals();
     }
 
@@ -153,7 +178,7 @@ public sealed class HandVisualizer : MonoBehaviour
     {
         if (!_drawLandmarks || _material.keys == null || _pipeline == null) return;
 
-        for (var hand = 0; hand < HandPipeline.MaxHandCount; hand++)
+        for (var hand = 0; hand < DualHandCount; hand++)
         {
             if (!_pipeline.IsHandTracked(hand)) continue;
 
@@ -169,8 +194,6 @@ public sealed class HandVisualizer : MonoBehaviour
 
     void OnGUI()
     {
-        EnsureRuntimeArrays();
-
         GUI.Box(new Rect(20, 20, 1040, 132), "");
 
         var titleStyle = new GUIStyle(GUI.skin.label)
@@ -189,31 +212,23 @@ public sealed class HandVisualizer : MonoBehaviour
         GUI.Label
         (
             new Rect(35, 34, 990, 34),
-            $"終章：安放與綻放（雙手）  |  {_status}",
+            $"終章：安放與綻放（雙手） | {_status}",
             titleStyle
         );
 
         var trackedCount = _pipeline != null ? _pipeline.TrackedHandCount : 0;
-        var leftOpen = _opennessRatio.Length > 0 ? _opennessRatio[0] : 0;
-        var leftExt = _extendedCount.Length > 0 ? _extendedCount[0] : 0;
-        var leftSpeed = _smoothedSpeed.Length > 0 ? _smoothedSpeed[0] : 0;
-        var rightOpen = _opennessRatio.Length > 1 ? _opennessRatio[1] : 0;
-        var rightExt = _extendedCount.Length > 1 ? _extendedCount[1] : 0;
-        var rightSpeed = _smoothedSpeed.Length > 1 ? _smoothedSpeed[1] : 0;
-        var leftLatch = _openPalmLatch.Length > 0 && _openPalmLatch[0] ? "Y" : "N";
-        var rightLatch = _openPalmLatch.Length > 1 && _openPalmLatch[1] ? "Y" : "N";
 
         GUI.Label
         (
             new Rect(35, 72, 990, 28),
-            $"追蹤: {trackedCount}/2 | 左手 開掌比: {leftOpen:F2} 伸指: {leftExt}/5 速度: {leftSpeed:F2} 開掌: {leftLatch}",
+            $"追蹤: {trackedCount}/2 | 左手 開掌比: {_opennessRatio[0]:F2} 伸指: {_extendedCount[0]}/5 速度: {_smoothedSpeed[0]:F2} 開掌: {(_openPalmLatch[0] ? "是" : "否")}",
             hintStyle
         );
 
         GUI.Label
         (
             new Rect(35, 98, 990, 28),
-            $"追蹤: {trackedCount}/2 | 右手 開掌比: {rightOpen:F2} 伸指: {rightExt}/5 速度: {rightSpeed:F2} 開掌: {rightLatch}（按 R 重置）",
+            $"追蹤: {trackedCount}/2 | 右手 開掌比: {_opennessRatio[1]:F2} 伸指: {_extendedCount[1]}/5 速度: {_smoothedSpeed[1]:F2} 開掌: {(_openPalmLatch[1] ? "是" : "否")}（按 R 重置）",
             hintStyle
         );
     }
@@ -305,48 +320,25 @@ public sealed class HandVisualizer : MonoBehaviour
         _extendedCount[handIndex] = extended;
         _opennessRatio[handIndex] = tipAvg / Mathf.Max(pipAvg, 0.001f);
 
+        // 水平手勢抗性：手掌越側向，門檻越放寬
         var palmNormal = Vector3.Cross(indexMcp - wrist, pinkyMcp - wrist);
         var palmNormalN = palmNormal.sqrMagnitude > 1e-6f ? palmNormal.normalized : Vector3.forward;
         var edgeOn = Mathf.Clamp01(1.0f - Mathf.Abs(palmNormalN.z));
         var adaptiveThreshold = _openPalmRatioThreshold - _edgeOnThresholdRelax * edgeOn;
 
+        // 防抖：進入/退出不同門檻
         var openEnter = _opennessRatio[handIndex] >= adaptiveThreshold && extended >= 3;
         var openExit = _opennessRatio[handIndex] >= (adaptiveThreshold - _openPalmHysteresis) && extended >= 2;
 
         _openPalmLatch[handIndex] = _openPalmLatch[handIndex] ? openExit : openEnter;
-        var openPalm = _openPalmLatch[handIndex];
 
         return new HandSignal
         {
             tracked = true,
             center = center,
             speed = _smoothedSpeed[handIndex],
-            openPalm = openPalm
+            openPalm = _openPalmLatch[handIndex]
         };
-    }
-
-    void EnsureRuntimeArrays()
-    {
-        if (_hands == null || _hands.Length != DualHandCount)
-            _hands = new HandSignal[DualHandCount];
-
-        if (_hasPrevCenter == null || _hasPrevCenter.Length != DualHandCount)
-            _hasPrevCenter = new bool[DualHandCount];
-
-        if (_prevCenter == null || _prevCenter.Length != DualHandCount)
-            _prevCenter = new Vector2[DualHandCount];
-
-        if (_smoothedSpeed == null || _smoothedSpeed.Length != DualHandCount)
-            _smoothedSpeed = new float[DualHandCount];
-
-        if (_opennessRatio == null || _opennessRatio.Length != DualHandCount)
-            _opennessRatio = new float[DualHandCount];
-
-        if (_extendedCount == null || _extendedCount.Length != DualHandCount)
-            _extendedCount = new int[DualHandCount];
-
-        if (_openPalmLatch == null || _openPalmLatch.Length != DualHandCount)
-            _openPalmLatch = new bool[DualHandCount];
     }
 
     bool IsPlacementPose(HandSignal hand)
@@ -446,18 +438,112 @@ public sealed class HandVisualizer : MonoBehaviour
         _seedX = 0;
         _referenceYLeft = 0;
         _referenceYRight = 0;
-        if (_openPalmLatch != null)
-            for (var i = 0; i < _openPalmLatch.Length; i++)
-                _openPalmLatch[i] = false;
+
+        for (var i = 0; i < _openPalmLatch.Length; i++)
+            _openPalmLatch[i] = false;
+
         _status = "已重置，請再次伸出雙手。";
+    }
+
+    #endregion
+
+    #region Visual objects
+
+    void EnsureRuntimeArrays()
+    {
+        if (_hands == null || _hands.Length != DualHandCount)
+            _hands = new HandSignal[DualHandCount];
+
+        if (_hasPrevCenter == null || _hasPrevCenter.Length != DualHandCount)
+            _hasPrevCenter = new bool[DualHandCount];
+
+        if (_prevCenter == null || _prevCenter.Length != DualHandCount)
+            _prevCenter = new Vector2[DualHandCount];
+
+        if (_smoothedSpeed == null || _smoothedSpeed.Length != DualHandCount)
+            _smoothedSpeed = new float[DualHandCount];
+
+        if (_opennessRatio == null || _opennessRatio.Length != DualHandCount)
+            _opennessRatio = new float[DualHandCount];
+
+        if (_extendedCount == null || _extendedCount.Length != DualHandCount)
+            _extendedCount = new int[DualHandCount];
+
+        if (_openPalmLatch == null || _openPalmLatch.Length != DualHandCount)
+            _openPalmLatch = new bool[DualHandCount];
+    }
+
+    Texture2D TryLoadResourceTexture(params string[] names)
+    {
+        for (var i = 0; i < names.Length; i++)
+        {
+            var tex = Resources.Load<Texture2D>(names[i]);
+            if (tex != null) return tex;
+        }
+
+        return null;
+    }
+
+    void ApplyMainTexture(Material mat, Texture tex)
+    {
+        if (mat == null || tex == null) return;
+
+        if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", tex);
+        if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", tex);
+    }
+
+    void ApplyMainColor(Material mat, Color color)
+    {
+        if (mat == null) return;
+
+        if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color);
+        if (mat.HasProperty("_Color")) mat.SetColor("_Color", color);
+    }
+
+    void SetMainTextureTiling(Material mat, Vector2 tiling)
+    {
+        if (mat == null) return;
+
+        if (mat.HasProperty("_BaseMap")) mat.SetTextureScale("_BaseMap", tiling);
+        if (mat.HasProperty("_MainTex")) mat.SetTextureScale("_MainTex", tiling);
+    }
+
+    Material CreateLitMaterial(Color color)
+    {
+        var shader = Shader.Find("Universal Render Pipeline/Lit");
+        if (shader == null) shader = Shader.Find("Standard");
+
+        var mat = new Material(shader);
+        ApplyMainColor(mat, color);
+        return mat;
+    }
+
+    Material CreateSeedMaterial()
+    {
+        var shader = Shader.Find("Unlit/Transparent");
+        if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
+        if (shader == null) shader = Shader.Find("Standard");
+
+        var mat = new Material(shader);
+        ApplyMainColor(mat, _seedTint);
+        ApplyMainTexture(mat, _seedTexture);
+
+        return mat;
     }
 
     void CreateRitualObjects()
     {
-        _groundMaterial = CreateColorMaterial(new Color(0.18f, 0.28f, 0.22f, 1));
-        _seedMaterial = CreateColorMaterial(new Color(0.90f, 0.86f, 0.55f, 1));
-        _sproutMaterial = CreateColorMaterial(new Color(0.52f, 0.90f, 0.50f, 1));
-        _bloomMaterial = CreateColorMaterial(new Color(0.98f, 0.68f, 0.88f, 1));
+        _groundMaterial = CreateLitMaterial(new Color(0.20f, 0.29f, 0.23f, 1));
+        _sproutMaterial = CreateLitMaterial(new Color(0.52f, 0.90f, 0.50f, 1));
+        _bloomMaterial = CreateLitMaterial(new Color(0.98f, 0.68f, 0.88f, 1));
+
+        if (_soilTexture != null)
+        {
+            ApplyMainTexture(_groundMaterial, _soilTexture);
+            SetMainTextureTiling(_groundMaterial, new Vector2(_soilTiling, _soilTiling));
+        }
+
+        _seedMaterial = CreateSeedMaterial();
 
         _groundObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
         _groundObject.name = "RitualGround";
@@ -465,10 +551,10 @@ public sealed class HandVisualizer : MonoBehaviour
         _groundObject.transform.localScale = new Vector3(1.25f, 0.30f, 1);
         _groundObject.GetComponent<MeshRenderer>().material = _groundMaterial;
 
-        _seedObject = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        _seedObject.name = "Seed";
+        _seedObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        _seedObject.name = "Seed2D";
         _seedObject.GetComponent<MeshRenderer>().material = _seedMaterial;
-        _seedObject.transform.localScale = Vector3.one * 0.06f;
+        _seedObject.transform.localScale = new Vector3(_seedSize.x, _seedSize.y, 1);
 
         _sproutObject = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
         _sproutObject.name = "Sprout";
@@ -478,16 +564,6 @@ public sealed class HandVisualizer : MonoBehaviour
         _bloomObject.name = "Bloom";
         _bloomObject.GetComponent<MeshRenderer>().material = _bloomMaterial;
         _bloomObject.transform.localScale = Vector3.one * 0.04f;
-    }
-
-    Material CreateColorMaterial(Color color)
-    {
-        var shader = Shader.Find("Universal Render Pipeline/Lit");
-        if (!shader) shader = Shader.Find("Standard");
-
-        var mat = new Material(shader);
-        mat.color = color;
-        return mat;
     }
 
     void UpdateRitualVisuals()
@@ -503,18 +579,33 @@ public sealed class HandVisualizer : MonoBehaviour
         }
 
         var seedPos = new Vector3(Mathf.Clamp(_seedX, -0.42f, 0.42f), seedY, 2.4f);
-        _seedObject.transform.position = seedPos;
+
+        if (_seedObject != null)
+        {
+            _seedObject.transform.position = seedPos;
+            _seedObject.transform.localScale = new Vector3(_seedSize.x, _seedSize.y, 1);
+
+            if (_mainCamera == null) _mainCamera = Camera.main;
+            if (_mainCamera != null)
+                _seedObject.transform.rotation = Quaternion.LookRotation(-_mainCamera.transform.forward, _mainCamera.transform.up);
+        }
 
         var stemHeight = Mathf.Lerp(0.001f, 0.28f, _growth);
         var stemScale = new Vector3(0.02f, stemHeight / 2, 0.02f);
         var stemPos = new Vector3(seedPos.x, _seedGroundY + stemHeight / 2 + 0.02f, 2.4f);
 
-        _sproutObject.transform.position = stemPos;
-        _sproutObject.transform.localScale = stemScale;
+        if (_sproutObject != null)
+        {
+            _sproutObject.transform.position = stemPos;
+            _sproutObject.transform.localScale = stemScale;
+        }
 
         var bloomScale = Mathf.Lerp(0.02f, 0.08f, _growth);
-        _bloomObject.transform.localScale = Vector3.one * bloomScale;
-        _bloomObject.transform.position = new Vector3(seedPos.x, _seedGroundY + stemHeight + 0.06f, 2.4f);
+        if (_bloomObject != null)
+        {
+            _bloomObject.transform.localScale = Vector3.one * bloomScale;
+            _bloomObject.transform.position = new Vector3(seedPos.x, _seedGroundY + stemHeight + 0.06f, 2.4f);
+        }
     }
 
     #endregion
