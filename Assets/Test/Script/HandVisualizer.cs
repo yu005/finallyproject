@@ -156,6 +156,12 @@ public sealed class HandVisualizer : MonoBehaviour
             _soilTexture = TryLoadResourceTexture("Ground091_2K_Color", "Ground091_1K_Color", "Ground091_Color", "Ground091");
         if (_grassTexture == null && _autoLoadGrassFromResources)
             _grassTexture = TryLoadResourceTexture(_grassResourceName, "GrassPatch");
+        if (_grassTexture == null && _autoLoadGrassFromResources)
+        {
+            var grassSprites = Resources.LoadAll<Sprite>(_grassResourceName);
+            if (grassSprites != null && grassSprites.Length > 0 && grassSprites[0] != null)
+                _grassTexture = grassSprites[0].texture;
+        }
 
         _state = RitualState.WaitingPlace;
         _status = "請伸出雙手，準備開始儀式。";
@@ -624,6 +630,14 @@ public sealed class HandVisualizer : MonoBehaviour
         if (mat.HasProperty("_MainTex")) mat.SetTextureScale("_MainTex", tiling);
     }
 
+    void SetMainTextureOffset(Material mat, Vector2 offset)
+    {
+        if (mat == null) return;
+
+        if (mat.HasProperty("_BaseMap")) mat.SetTextureOffset("_BaseMap", offset);
+        if (mat.HasProperty("_MainTex")) mat.SetTextureOffset("_MainTex", offset);
+    }
+
     Material CreateLitMaterial(Color color)
     {
         var shader = Shader.Find("Universal Render Pipeline/Lit");
@@ -668,9 +682,20 @@ public sealed class HandVisualizer : MonoBehaviour
         ApplyMainColor(mat, _grassTint);
 
         if (_grassTexture != null)
+        {
             ApplyMainTexture(mat, _grassTexture);
+            SetMainTextureTiling(mat, Vector2.one);
+            SetMainTextureOffset(mat, Vector2.zero);
+        }
         else
+        {
             Debug.LogWarning("HandVisualizer: 沒有載入到草地貼圖，將使用純色草地。");
+            if (_soilTexture != null) ApplyMainTexture(mat, _soilTexture);
+        }
+
+        if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0);     // 雙面顯示
+        if (mat.HasProperty("_ZWrite")) mat.SetFloat("_ZWrite", 0); // 透明草地避免深度遮擋
+        mat.renderQueue = 3001;
 
         return mat;
     }
@@ -705,8 +730,8 @@ public sealed class HandVisualizer : MonoBehaviour
 
         _grassObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
         _grassObject.name = "RitualGrass";
-        _grassObject.transform.position = new Vector3(0, _seedGroundY - 0.17f, 2.50f);
-        _grassObject.transform.localScale = new Vector3(0.78f, 0.18f, 1);
+        _grassObject.transform.position = new Vector3(0, _seedGroundY - 0.15f, 2.28f);
+        _grassObject.transform.localScale = new Vector3(1.00f, 0.26f, 1);
         _grassObject.GetComponent<MeshRenderer>().material = _grassMaterial;
 
         _seedObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
