@@ -21,6 +21,8 @@ public sealed class HandVisualizer : MonoBehaviour
     [SerializeField, Range(0.05f, 2.0f)] float _maxHandSpeedForPlace = 0.45f;
     [SerializeField, Range(0.0f, 0.4f)] float _placementHeightLimit = 0.10f;
     [SerializeField, Range(1.0f, 1.8f)] float _openPalmRatioThreshold = 1.22f;
+    [SerializeField, Range(0.0f, 0.3f)] float _edgeOnThresholdRelax = 0.14f;
+    [SerializeField, Range(0.0f, 0.2f)] float _openPalmHysteresis = 0.08f;
     [SerializeField, Range(0.02f, 0.4f)] float _liftStartDistance = 0.10f;
     [SerializeField, Range(0.08f, 0.6f)] float _liftFullDistance = 0.30f;
     [SerializeField] bool _showCropPreview = false;
@@ -77,6 +79,7 @@ public sealed class HandVisualizer : MonoBehaviour
     float[] _smoothedSpeed;
     float[] _opennessRatio;
     int[] _extendedCount;
+    bool[] _openPalmLatch;
 
     string _status = "";
 
@@ -197,18 +200,20 @@ public sealed class HandVisualizer : MonoBehaviour
         var rightOpen = _opennessRatio.Length > 1 ? _opennessRatio[1] : 0;
         var rightExt = _extendedCount.Length > 1 ? _extendedCount[1] : 0;
         var rightSpeed = _smoothedSpeed.Length > 1 ? _smoothedSpeed[1] : 0;
+        var leftLatch = _openPalmLatch.Length > 0 && _openPalmLatch[0] ? "Y" : "N";
+        var rightLatch = _openPalmLatch.Length > 1 && _openPalmLatch[1] ? "Y" : "N";
 
         GUI.Label
         (
             new Rect(35, 72, 990, 28),
-            $"Tracked: {trackedCount}/2 | Left OpenRatio: {leftOpen:F2} Fingers: {leftExt}/5 Speed: {leftSpeed:F2}",
+            $"Tracked: {trackedCount}/2 | Left OpenRatio: {leftOpen:F2} Fingers: {leftExt}/5 Speed: {leftSpeed:F2} Open: {leftLatch}",
             hintStyle
         );
 
         GUI.Label
         (
             new Rect(35, 98, 990, 28),
-            $"Tracked: {trackedCount}/2 | Right OpenRatio: {rightOpen:F2} Fingers: {rightExt}/5 Speed: {rightSpeed:F2} (Press R to reset)",
+            $"Tracked: {trackedCount}/2 | Right OpenRatio: {rightOpen:F2} Fingers: {rightExt}/5 Speed: {rightSpeed:F2} Open: {rightLatch} (Press R to reset)",
             hintStyle
         );
     }
@@ -229,26 +234,28 @@ public sealed class HandVisualizer : MonoBehaviour
             _smoothedSpeed[handIndex] = 0;
             _opennessRatio[handIndex] = 0;
             _extendedCount[handIndex] = 0;
+            _openPalmLatch[handIndex] = false;
             return default;
         }
 
-        Vector2 Get2D(int index)
+        Vector3 Get3D(int index)
         {
             var p = _pipeline.GetKeyPoint(handIndex, index);
             if (_invertY) p.y = -p.y;
-            return new Vector2(p.x, p.y);
+            return p;
         }
 
-        var wrist = Get2D(0);
-        var indexMcp = Get2D(5);
-        var middleMcp = Get2D(9);
-        var ringMcp = Get2D(13);
-        var pinkyMcp = Get2D(17);
+        var wrist = Get3D(0);
+        var indexMcp = Get3D(5);
+        var middleMcp = Get3D(9);
+        var ringMcp = Get3D(13);
+        var pinkyMcp = Get3D(17);
 
-        var center = (wrist + indexMcp + middleMcp + ringMcp + pinkyMcp) / 5.0f;
+        var center3 = (wrist + indexMcp + middleMcp + ringMcp + pinkyMcp) / 5.0f;
+        var center = new Vector2(center3.x, center3.y);
 
-        var palmSpan = Vector2.Distance(indexMcp, pinkyMcp);
-        var palmLength = Vector2.Distance(wrist, middleMcp);
+        var palmSpan = Vector3.Distance(indexMcp, pinkyMcp);
+        var palmLength = Vector3.Distance(wrist, middleMcp);
         var tracked = palmSpan > 0.035f && palmLength > 0.035f;
 
         if (!tracked)
@@ -257,6 +264,7 @@ public sealed class HandVisualizer : MonoBehaviour
             _smoothedSpeed[handIndex] = 0;
             _opennessRatio[handIndex] = 0;
             _extendedCount[handIndex] = 0;
+            _openPalmLatch[handIndex] = false;
             return default;
         }
 
@@ -279,11 +287,11 @@ public sealed class HandVisualizer : MonoBehaviour
 
         for (var i = 0; i < TipIndices.Length; i++)
         {
-            var tip = Get2D(TipIndices[i]);
-            var pip = Get2D(PipIndices[i]);
+            var tip = Get3D(TipIndices[i]);
+            var pip = Get3D(PipIndices[i]);
 
-            var tipDist = Vector2.Distance(tip, wrist);
-            var pipDist = Vector2.Distance(pip, wrist);
+            var tipDist = Vector3.Distance(tip, wrist);
+            var pipDist = Vector3.Distance(pip, wrist);
 
             tipAvg += tipDist;
             pipAvg += pipDist;
@@ -297,7 +305,16 @@ public sealed class HandVisualizer : MonoBehaviour
         _extendedCount[handIndex] = extended;
         _opennessRatio[handIndex] = tipAvg / Mathf.Max(pipAvg, 0.001f);
 
-        var openPalm = _opennessRatio[handIndex] >= _openPalmRatioThreshold && extended >= 4;
+        var palmNormal = Vector3.Cross(indexMcp - wrist, pinkyMcp - wrist);
+        var palmNormalN = palmNormal.sqrMagnitude > 1e-6f ? palmNormal.normalized : Vector3.forward;
+        var edgeOn = Mathf.Clamp01(1.0f - Mathf.Abs(palmNormalN.z));
+        var adaptiveThreshold = _openPalmRatioThreshold - _edgeOnThresholdRelax * edgeOn;
+
+        var openEnter = _opennessRatio[handIndex] >= adaptiveThreshold && extended >= 3;
+        var openExit = _opennessRatio[handIndex] >= (adaptiveThreshold - _openPalmHysteresis) && extended >= 2;
+
+        _openPalmLatch[handIndex] = _openPalmLatch[handIndex] ? openExit : openEnter;
+        var openPalm = _openPalmLatch[handIndex];
 
         return new HandSignal
         {
@@ -327,6 +344,9 @@ public sealed class HandVisualizer : MonoBehaviour
 
         if (_extendedCount == null || _extendedCount.Length != DualHandCount)
             _extendedCount = new int[DualHandCount];
+
+        if (_openPalmLatch == null || _openPalmLatch.Length != DualHandCount)
+            _openPalmLatch = new bool[DualHandCount];
     }
 
     bool IsPlacementPose(HandSignal hand)
@@ -426,6 +446,9 @@ public sealed class HandVisualizer : MonoBehaviour
         _seedX = 0;
         _referenceYLeft = 0;
         _referenceYRight = 0;
+        if (_openPalmLatch != null)
+            for (var i = 0; i < _openPalmLatch.Length; i++)
+                _openPalmLatch[i] = false;
         _status = "Reset complete. Show both hands to start again.";
     }
 
