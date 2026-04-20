@@ -518,6 +518,48 @@ public sealed class HandVisualizer : MonoBehaviour
         return mat;
     }
 
+    Material CreateGroundMaterial()
+    {
+        var baseColor = new Color(0.20f, 0.29f, 0.23f, 1);
+
+        if (_soilTexture != null)
+        {
+            var shader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (shader == null) shader = Shader.Find("Unlit/Texture");
+            if (shader == null) shader = Shader.Find("Standard");
+
+            var mat = new Material(shader);
+            ApplyMainColor(mat, baseColor);
+            ApplyMainTexture(mat, _soilTexture);
+            SetMainTextureTiling(mat, new Vector2(_soilTiling, _soilTiling));
+
+            if (mat.HasProperty("_EmissionColor"))
+            {
+                mat.EnableKeyword("_EMISSION");
+                mat.SetColor("_EmissionColor", new Color(0.08f, 0.05f, 0.03f));
+            }
+
+            return mat;
+        }
+        else
+        {
+            var shader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (shader == null) shader = Shader.Find("Unlit/Color");
+            if (shader == null) shader = Shader.Find("Standard");
+
+            var mat = new Material(shader);
+            ApplyMainColor(mat, baseColor);
+
+            if (mat.HasProperty("_EmissionColor"))
+            {
+                mat.EnableKeyword("_EMISSION");
+                mat.SetColor("_EmissionColor", new Color(0.10f, 0.06f, 0.04f));
+            }
+
+            return mat;
+        }
+    }
+
     Material CreateSeedMaterial()
     {
         var shader = Shader.Find("Unlit/Transparent");
@@ -533,15 +575,9 @@ public sealed class HandVisualizer : MonoBehaviour
 
     void CreateRitualObjects()
     {
-        _groundMaterial = CreateLitMaterial(new Color(0.20f, 0.29f, 0.23f, 1));
+        _groundMaterial = CreateGroundMaterial();
         _sproutMaterial = CreateLitMaterial(new Color(0.52f, 0.90f, 0.50f, 1));
         _bloomMaterial = CreateLitMaterial(new Color(0.98f, 0.68f, 0.88f, 1));
-
-        if (_soilTexture != null)
-        {
-            ApplyMainTexture(_groundMaterial, _soilTexture);
-            SetMainTextureTiling(_groundMaterial, new Vector2(_soilTiling, _soilTiling));
-        }
 
         _seedMaterial = CreateSeedMaterial();
 
