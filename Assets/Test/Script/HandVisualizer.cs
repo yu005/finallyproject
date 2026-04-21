@@ -142,7 +142,10 @@ public sealed class HandVisualizer : MonoBehaviour
     #region MonoBehaviour implementation
 
     void Awake()
-      => EnsureRuntimeArrays();
+    {
+        EnsureRuntimeArrays();
+        EnsureAudioListenerExists();
+    }
 
     void Start()
     {
@@ -607,6 +610,8 @@ public sealed class HandVisualizer : MonoBehaviour
 
     void EnsureRhythmAudioSource()
     {
+        EnsureAudioListenerExists();
+
         _rhythmAudioSource = GetComponent<AudioSource>();
         if (_rhythmAudioSource == null)
             _rhythmAudioSource = gameObject.AddComponent<AudioSource>();
@@ -616,11 +621,18 @@ public sealed class HandVisualizer : MonoBehaviour
         _rhythmAudioSource.spatialBlend = 0;
         _rhythmAudioSource.volume = Mathf.Clamp01(_rhythmAudioVolume);
 
-        if (FindObjectsOfType<AudioListener>().Length == 0 && _mainCamera != null)
-            _mainCamera.gameObject.AddComponent<AudioListener>();
-
         if (_runtimeRhythmBeepClip == null)
             _runtimeRhythmBeepClip = BuildRuntimeBeepClip();
+    }
+
+    void EnsureAudioListenerExists()
+    {
+        var listeners = FindObjectsOfType<AudioListener>(true);
+        if (listeners != null && listeners.Length > 0) return;
+
+        var host = _mainCamera != null ? _mainCamera.gameObject : gameObject;
+        if (host.GetComponent<AudioListener>() == null)
+            host.AddComponent<AudioListener>();
     }
 
     AudioClip GetRhythmClip(int count)
