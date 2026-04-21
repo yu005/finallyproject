@@ -25,8 +25,10 @@ public sealed class HandVisualizer : MonoBehaviour
     [SerializeField] string _seedResourceName = "Seeds_Cereals";
 
     [SerializeField] Texture2D _soilTexture = null;
+    [SerializeField] bool _useSoilTexture = false;
     [SerializeField] bool _autoLoadSoilFromResources = true;
     [SerializeField, Range(1, 12)] float _soilTiling = 4;
+    [SerializeField] bool _enableGrassOverlay = false;
     [SerializeField] Texture2D _grassTexture = null;
     [SerializeField] bool _autoLoadGrassFromResources = true;
     [SerializeField] string _grassResourceName = "GrassPatch";
@@ -56,6 +58,8 @@ public sealed class HandVisualizer : MonoBehaviour
     [SerializeField] AudioClip _rhythmCount2Clip = null;
     [SerializeField] AudioClip _rhythmCount3Clip = null;
     [SerializeField] AudioClip _rhythmFallbackClip = null;
+    [SerializeField, Range(220f, 1600f)] float _rhythmFallbackBeepHz = 880f;
+    [SerializeField, Range(0.04f, 0.35f)] float _rhythmFallbackBeepSeconds = 0.11f;
 
     [SerializeField] bool _showCropPreview = false;
     [SerializeField] bool _drawLandmarks = true;
@@ -86,6 +90,7 @@ public sealed class HandVisualizer : MonoBehaviour
 
     Camera _mainCamera;
     AudioSource _rhythmAudioSource;
+    AudioClip _runtimeRhythmBeepClip;
 
     enum RitualState
     {
@@ -165,9 +170,9 @@ public sealed class HandVisualizer : MonoBehaviour
 
         if (_soilTexture == null && _autoLoadSoilFromResources)
             _soilTexture = TryLoadResourceTexture("Ground091_2K_Color", "Ground091_1K_Color", "Ground091_Color", "Ground091");
-        if (_grassTexture == null && _autoLoadGrassFromResources)
+        if (_enableGrassOverlay && _grassTexture == null && _autoLoadGrassFromResources)
             _grassTexture = TryLoadResourceTexture(_grassResourceName, "GrassPatch");
-        if (_grassTexture == null && _autoLoadGrassFromResources)
+        if (_enableGrassOverlay && _grassTexture == null && _autoLoadGrassFromResources)
         {
             var grassSprites = Resources.LoadAll<Sprite>(_grassResourceName);
             if (grassSprites != null && grassSprites.Length > 0 && grassSprites[0] != null)
@@ -198,6 +203,8 @@ public sealed class HandVisualizer : MonoBehaviour
         if (_bloomObject != null) Destroy(_bloomObject);
         if (_groundObject != null) Destroy(_groundObject);
         if (_grassObject != null) Destroy(_grassObject);
+
+        if (_runtimeRhythmBeepClip != null) Destroy(_runtimeRhythmBeepClip);
     }
 
     void LateUpdate()
@@ -608,6 +615,12 @@ public sealed class HandVisualizer : MonoBehaviour
         _rhythmAudioSource.loop = false;
         _rhythmAudioSource.spatialBlend = 0;
         _rhythmAudioSource.volume = Mathf.Clamp01(_rhythmAudioVolume);
+
+        if (FindObjectsOfType<AudioListener>().Length == 0 && _mainCamera != null)
+            _mainCamera.gameObject.AddComponent<AudioListener>();
+
+        if (_runtimeRhythmBeepClip == null)
+            _runtimeRhythmBeepClip = BuildRuntimeBeepClip();
     }
 
     AudioClip GetRhythmClip(int count)
@@ -615,7 +628,28 @@ public sealed class HandVisualizer : MonoBehaviour
         if (count == 1 && _rhythmCount1Clip != null) return _rhythmCount1Clip;
         if (count == 2 && _rhythmCount2Clip != null) return _rhythmCount2Clip;
         if (count >= 3 && _rhythmCount3Clip != null) return _rhythmCount3Clip;
-        return _rhythmFallbackClip;
+        if (_rhythmFallbackClip != null) return _rhythmFallbackClip;
+        return _runtimeRhythmBeepClip;
+    }
+
+    AudioClip BuildRuntimeBeepClip()
+    {
+        const int sampleRate = 44100;
+        var duration = Mathf.Clamp(_rhythmFallbackBeepSeconds, 0.04f, 0.35f);
+        var freq = Mathf.Clamp(_rhythmFallbackBeepHz, 220f, 1600f);
+        var samples = Mathf.Max(1, Mathf.RoundToInt(sampleRate * duration));
+        var data = new float[samples];
+
+        for (var i = 0; i < samples; i++)
+        {
+            var t = i / (float)sampleRate;
+            var envelope = Mathf.Sin(Mathf.PI * Mathf.Clamp01(i / Mathf.Max(1f, samples - 1f)));
+            data[i] = Mathf.Sin(2f * Mathf.PI * freq * t) * envelope * 0.32f;
+        }
+
+        var clip = AudioClip.Create("RhythmFallbackBeep", samples, 1, sampleRate, false);
+        clip.SetData(data, 0);
+        return clip;
     }
 
     void TriggerRhythmCue(int count, bool finalBeat)
@@ -627,6 +661,7 @@ public sealed class HandVisualizer : MonoBehaviour
         if (!_enableRhythmAudio || _rhythmAudioSource == null) return;
 
         _rhythmAudioSource.volume = Mathf.Clamp01(_rhythmAudioVolume);
+        _rhythmAudioSource.pitch = finalBeat ? 1.28f : 1.0f + 0.12f * (clampedCount - 1);
         var clip = GetRhythmClip(clampedCount);
         if (clip != null)
             _rhythmAudioSource.PlayOneShot(clip, Mathf.Clamp01(_rhythmAudioVolume));
@@ -727,7 +762,7 @@ public sealed class HandVisualizer : MonoBehaviour
         if (shader == null) shader = Shader.Find("Unlit/Color");
         if (shader == null) shader = Shader.Find("Standard");
 
-        if (_soilTexture != null)
+        if (_useSoilTexture && _soilTexture != null)
         {
             var mat = new Material(shader);
             ApplyMainColor(mat, baseColor);
@@ -787,7 +822,8 @@ public sealed class HandVisualizer : MonoBehaviour
     void CreateRitualObjects()
     {
         _groundMaterial = CreateGroundMaterial();
-        _grassMaterial = CreateGrassMaterial();
+        if (_enableGrassOverlay)
+            _grassMaterial = CreateGrassMaterial();
         _sproutMaterial = CreateLitMaterial(new Color(0.52f, 0.90f, 0.50f, 1));
         _bloomMaterial = CreateLitMaterial(new Color(0.98f, 0.68f, 0.88f, 1));
 
@@ -799,11 +835,14 @@ public sealed class HandVisualizer : MonoBehaviour
         _groundObject.transform.localScale = new Vector3(0.92f, 0.17f, 0.52f);
         _groundObject.GetComponent<MeshRenderer>().material = _groundMaterial;
 
-        _grassObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
-        _grassObject.name = "RitualGrass";
-        _grassObject.transform.position = new Vector3(0, _seedGroundY - 0.15f, 2.28f);
-        _grassObject.transform.localScale = new Vector3(1.00f, 0.26f, 1);
-        _grassObject.GetComponent<MeshRenderer>().material = _grassMaterial;
+        if (_enableGrassOverlay)
+        {
+            _grassObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            _grassObject.name = "RitualGrass";
+            _grassObject.transform.position = new Vector3(0, _seedGroundY - 0.15f, 2.28f);
+            _grassObject.transform.localScale = new Vector3(1.00f, 0.26f, 1);
+            _grassObject.GetComponent<MeshRenderer>().material = _grassMaterial;
+        }
 
         _seedObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
         _seedObject.name = "Seed2D";
