@@ -152,6 +152,8 @@ public sealed class HandVisualizer : MonoBehaviour
         _mainCamera = Camera.main;
         EnsureRuntimeArrays();
         EnsureRhythmAudioSource();
+        _enableGrassOverlay = false;
+        _useSoilTexture = false;
 
         _pipeline = new HandPipeline(_resources);
         _material = (new Material(_keyPointShader), new Material(_handRegionShader));
@@ -768,7 +770,7 @@ public sealed class HandVisualizer : MonoBehaviour
 
     Material CreateGroundMaterial()
     {
-        var baseColor = new Color(0.30f, 0.20f, 0.12f, 1);
+        var baseColor = new Color(0.46f, 0.30f, 0.17f, 1);
         var shader = Shader.Find("Universal Render Pipeline/Unlit");
         if (shader == null) shader = Shader.Find("Unlit/Texture");
         if (shader == null) shader = Shader.Find("Unlit/Color");
@@ -841,10 +843,10 @@ public sealed class HandVisualizer : MonoBehaviour
 
         _seedMaterial = CreateSeedMaterial();
 
-        _groundObject = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        _groundObject = GameObject.CreatePrimitive(PrimitiveType.Quad);
         _groundObject.name = "RitualGround";
-        _groundObject.transform.position = new Vector3(0, _seedGroundY - 0.26f, 2.62f);
-        _groundObject.transform.localScale = new Vector3(0.92f, 0.17f, 0.52f);
+        _groundObject.transform.position = new Vector3(0, _seedGroundY - 0.08f, 2.33f);
+        _groundObject.transform.localScale = new Vector3(1.02f, 0.25f, 1f);
         _groundObject.GetComponent<MeshRenderer>().material = _groundMaterial;
 
         if (_enableGrassOverlay)
@@ -893,6 +895,15 @@ public sealed class HandVisualizer : MonoBehaviour
             if (_mainCamera == null) _mainCamera = Camera.main;
             if (_mainCamera != null)
                 _seedObject.transform.rotation = Quaternion.LookRotation(-_mainCamera.transform.forward, _mainCamera.transform.up);
+        }
+
+        if (_groundObject != null)
+        {
+            _groundObject.transform.position = new Vector3(seedPos.x, _seedGroundY - 0.08f, 2.33f);
+
+            if (_mainCamera == null) _mainCamera = Camera.main;
+            if (_mainCamera != null)
+                _groundObject.transform.rotation = Quaternion.LookRotation(-_mainCamera.transform.forward, _mainCamera.transform.up);
         }
 
         if (_grassObject != null)
