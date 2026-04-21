@@ -18,7 +18,7 @@ public static class PlantGrowAnimationBuilder
 
     private const float FramesPerSecond = 10f;
     private const float PixelsPerUnit = 24f;
-    private const float PreviewScale = 6f;
+    private const float PreviewScale = 2.2f;
 
     [MenuItem("Tools/Bloom/建立 PlantGrowing 動畫資產")]
     public static void BuildPlantGrowAssets()
@@ -57,7 +57,7 @@ public static class PlantGrowAnimationBuilder
         EditorGUIUtility.PingObject(instance);
         EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
 
-        EditorUtility.DisplayDialog("PlantGrowing", "已建立動畫並放入目前場景（位置在 0,0,0）。", "OK");
+        EditorUtility.DisplayDialog("PlantGrowing", "已建立動畫並放入目前場景（預設不自動播放）。", "OK");
     }
 
     private static bool TryBuildAssets(out GameObject prefab, out string message)
@@ -120,7 +120,8 @@ public static class PlantGrowAnimationBuilder
             $"- 幀數：{sprites.Count}\n" +
             $"- Animation：{ClipPath}\n" +
             $"- Controller：{ControllerPath}\n" +
-            $"- Prefab：{PrefabPath}";
+            $"- Prefab：{PrefabPath}\n" +
+            "- 預設縮放已調小、且不會一開始自動播放";
         return true;
     }
 
@@ -195,7 +196,11 @@ public static class PlantGrowAnimationBuilder
         var animator = root.AddComponent<Animator>();
         animator.runtimeAnimatorController = controller;
 
+        var playback = root.AddComponent<PlantGrowPlayback>();
+        playback.BindAnimator(animator);
+
         root.transform.localScale = Vector3.one * PreviewScale;
+        playback.ResetToFirstFrame();
 
         PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
         Object.DestroyImmediate(root);
