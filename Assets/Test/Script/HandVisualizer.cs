@@ -48,6 +48,9 @@ public sealed class HandVisualizer : MonoBehaviour
     [SerializeField, Range(0.08f, 0.6f)] float _liftFullDistance = 0.30f;
     [SerializeField, Range(0.003f, 0.08f)] float _placeDetectDownDistance = 0.018f;
     [SerializeField, Range(0.002f, 0.06f)] float _placeRearmLiftDistance = 0.010f;
+    [SerializeField, Range(0.10f, 1.2f)] float _placeMinBeatInterval = 0.32f;
+    [SerializeField, Range(0.03f, 0.6f)] float _placeMinStrokeSeconds = 0.14f;
+    [SerializeField, Range(0.15f, 2.5f)] float _placeMaxStrokeSpeed = 0.75f;
     [SerializeField, Range(0.02f, 0.8f)] float _gestureLostGraceSeconds = 0.28f;
     [SerializeField, Range(0.02f, 1.0f)] float _placementDecayPerSecond = 0.35f;
     [SerializeField, Range(0.05f, 0.6f)] float _centerSmoothing = 0.20f;
@@ -123,6 +126,8 @@ public sealed class HandVisualizer : MonoBehaviour
     float _placeAnimTimer;
     int _placeDetectedCount;
     bool _placeNeedRearm;
+    float _placeStrokeTimer;
+    float _placeBeatCooldown;
     string _rhythmText = "";
     float _rhythmTextTimer;
 
@@ -456,12 +461,15 @@ public sealed class HandVisualizer : MonoBehaviour
                     _placeLostTimer = 0;
                     _placeAnimTimer = 0;
                     _placeNeedRearm = false;
+                    _placeStrokeTimer = 0;
+                    _placeBeatCooldown = 0;
                     _placeTimer = 0;
                 }
                 break;
 
             case RitualState.Placing:
                 _status = $"安放手勢中…請向下 {Mathf.Max(0, _placeRequiredDetections - _placeDetectedCount)} 次。";
+                _placeBeatCooldown = Mathf.Max(0, _placeBeatCooldown - Time.deltaTime);
                 if (bothPlacement)
                 {
                     if (_placeLostTimer > 0)
@@ -470,12 +478,15 @@ public sealed class HandVisualizer : MonoBehaviour
                         _referenceYRight = right.center.y;
                         _placingMaxDrop = 0;
                         _placeNeedRearm = false;
+                        _placeStrokeTimer = 0;
                     }
 
                     _placeLostTimer = 0;
 
                     if (!_placeNeedRearm)
                     {
+                        _placeStrokeTimer += Time.deltaTime;
+
                         var dropLeft = _referenceYLeft - left.center.y;
                         var dropRight = _referenceYRight - right.center.y;
                         var drop = Mathf.Max(dropLeft, dropRight);
@@ -484,6 +495,25 @@ public sealed class HandVisualizer : MonoBehaviour
 
                         if (_placingMaxDrop >= _placeDetectDownDistance)
                         {
+                            var strokeSpeed = Mathf.Max(left.speed, right.speed);
+                            var tooFast =
+                                _placeStrokeTimer < _placeMinStrokeSeconds ||
+                                strokeSpeed > _placeMaxStrokeSpeed ||
+                                _placeBeatCooldown > 0;
+
+                            if (tooFast)
+                            {
+                                _status = "太快了，請放慢節奏再向下。";
+                                _rhythmText = "太快";
+                                _rhythmTextTimer = Mathf.Min(0.45f, _rhythmTextShowSeconds);
+                                _placeNeedRearm = true;
+                                _placingMaxDrop = 0;
+                                _referenceYLeft = left.center.y;
+                                _referenceYRight = right.center.y;
+                                _placeStrokeTimer = 0;
+                                break;
+                            }
+
                             _placeDetectedCount++;
                             var isLastBeat = _placeDetectedCount >= Mathf.Max(1, _placeRequiredDetections);
                             TriggerRhythmCue(_placeDetectedCount, isLastBeat);
@@ -491,6 +521,8 @@ public sealed class HandVisualizer : MonoBehaviour
                             _placingMaxDrop = 0;
                             _referenceYLeft = left.center.y;
                             _referenceYRight = right.center.y;
+                            _placeStrokeTimer = 0;
+                            _placeBeatCooldown = _placeMinBeatInterval;
 
                             if (isLastBeat)
                             {
@@ -511,6 +543,7 @@ public sealed class HandVisualizer : MonoBehaviour
                             _placeNeedRearm = false;
                             _referenceYLeft = left.center.y;
                             _referenceYRight = right.center.y;
+                            _placeStrokeTimer = 0;
                         }
                     }
                 }
@@ -596,6 +629,8 @@ public sealed class HandVisualizer : MonoBehaviour
         _placeAnimTimer = 0;
         _placeDetectedCount = 0;
         _placeNeedRearm = false;
+        _placeStrokeTimer = 0;
+        _placeBeatCooldown = 0;
         _rhythmText = "";
         _rhythmTextTimer = 0;
 
