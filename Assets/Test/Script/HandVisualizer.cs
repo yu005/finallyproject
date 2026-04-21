@@ -81,6 +81,7 @@ public sealed class HandVisualizer : MonoBehaviour
     Material _bloomMaterial;
     Material _groundMaterial;
     Material _grassMaterial;
+    Texture2D _runtimeGroundSolidTexture;
 
     GameObject _seedObject;
     GameObject _sproutObject;
@@ -210,6 +211,7 @@ public sealed class HandVisualizer : MonoBehaviour
         if (_grassObject != null) Destroy(_grassObject);
 
         if (_runtimeRhythmBeepClip != null) Destroy(_runtimeRhythmBeepClip);
+        if (_runtimeGroundSolidTexture != null) Destroy(_runtimeGroundSolidTexture);
     }
 
     void LateUpdate()
@@ -771,13 +773,13 @@ public sealed class HandVisualizer : MonoBehaviour
     Material CreateGroundMaterial()
     {
         var baseColor = new Color(0.46f, 0.30f, 0.17f, 1);
-        var shader = Shader.Find("Universal Render Pipeline/Unlit");
-        if (shader == null) shader = Shader.Find("Unlit/Texture");
-        if (shader == null) shader = Shader.Find("Unlit/Color");
-        if (shader == null) shader = Shader.Find("Standard");
 
         if (_useSoilTexture && _soilTexture != null)
         {
+            var shader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (shader == null) shader = Shader.Find("Unlit/Texture");
+            if (shader == null) shader = Shader.Find("Standard");
+
             var mat = new Material(shader);
             ApplyMainColor(mat, baseColor);
             ApplyMainTexture(mat, _soilTexture);
@@ -786,10 +788,30 @@ public sealed class HandVisualizer : MonoBehaviour
         }
         else
         {
+            var shader = Shader.Find("Unlit/Color");
+            if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
+            if (shader == null) shader = Shader.Find("Unlit/Texture");
+            if (shader == null) shader = Shader.Find("Standard");
+
             var mat = new Material(shader);
             ApplyMainColor(mat, baseColor);
+            ApplyMainTexture(mat, GetOrCreateGroundSolidTexture(baseColor));
             return mat;
         }
+    }
+
+    Texture2D GetOrCreateGroundSolidTexture(Color color)
+    {
+        if (_runtimeGroundSolidTexture == null)
+        {
+            _runtimeGroundSolidTexture = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+            _runtimeGroundSolidTexture.wrapMode = TextureWrapMode.Repeat;
+            _runtimeGroundSolidTexture.filterMode = FilterMode.Bilinear;
+        }
+
+        _runtimeGroundSolidTexture.SetPixel(0, 0, color);
+        _runtimeGroundSolidTexture.Apply(false, false);
+        return _runtimeGroundSolidTexture;
     }
 
     Material CreateGrassMaterial()
