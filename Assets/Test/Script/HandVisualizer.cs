@@ -81,7 +81,7 @@ public sealed class HandVisualizer : MonoBehaviour
     Material _bloomMaterial;
     Material _groundMaterial;
     Material _grassMaterial;
-    Texture2D _runtimeGroundSolidTexture;
+    Texture2D _runtimeGroundTexture;
 
     GameObject _seedObject;
     GameObject _sproutObject;
@@ -153,8 +153,6 @@ public sealed class HandVisualizer : MonoBehaviour
         _mainCamera = Camera.main;
         EnsureRuntimeArrays();
         EnsureRhythmAudioSource();
-        _enableGrassOverlay = false;
-        _useSoilTexture = false;
 
         _pipeline = new HandPipeline(_resources);
         _material = (new Material(_keyPointShader), new Material(_handRegionShader));
@@ -211,7 +209,7 @@ public sealed class HandVisualizer : MonoBehaviour
         if (_grassObject != null) Destroy(_grassObject);
 
         if (_runtimeRhythmBeepClip != null) Destroy(_runtimeRhythmBeepClip);
-        if (_runtimeGroundSolidTexture != null) Destroy(_runtimeGroundSolidTexture);
+        if (_runtimeGroundTexture != null) Destroy(_runtimeGroundTexture);
     }
 
     void LateUpdate()
@@ -788,30 +786,55 @@ public sealed class HandVisualizer : MonoBehaviour
         }
         else
         {
-            var shader = Shader.Find("Unlit/Color");
+            var shader = Shader.Find("Unlit/Texture");
             if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
             if (shader == null) shader = Shader.Find("Unlit/Texture");
             if (shader == null) shader = Shader.Find("Standard");
 
             var mat = new Material(shader);
-            ApplyMainColor(mat, baseColor);
-            ApplyMainTexture(mat, GetOrCreateGroundSolidTexture(baseColor));
+            ApplyMainTexture(mat, GetOrCreateProceduralSoilTexture(baseColor));
             return mat;
         }
     }
 
-    Texture2D GetOrCreateGroundSolidTexture(Color color)
+    Texture2D GetOrCreateProceduralSoilTexture(Color baseColor)
     {
-        if (_runtimeGroundSolidTexture == null)
+        if (_runtimeGroundTexture != null) return _runtimeGroundTexture;
+
+        const int size = 256;
+        _runtimeGroundTexture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        _runtimeGroundTexture.wrapMode = TextureWrapMode.Repeat;
+        _runtimeGroundTexture.filterMode = FilterMode.Bilinear;
+
+        for (var y = 0; y < size; y++)
         {
-            _runtimeGroundSolidTexture = new Texture2D(1, 1, TextureFormat.RGBA32, false);
-            _runtimeGroundSolidTexture.wrapMode = TextureWrapMode.Repeat;
-            _runtimeGroundSolidTexture.filterMode = FilterMode.Bilinear;
+            var v = y / (float)(size - 1);
+            for (var x = 0; x < size; x++)
+            {
+                var u = x / (float)(size - 1);
+
+                var n1 = Mathf.PerlinNoise(u * 5.6f + 0.2f, v * 5.6f + 0.7f);
+                var n2 = Mathf.PerlinNoise(u * 13.5f + 1.2f, v * 13.5f + 2.1f);
+                var n3 = Mathf.PerlinNoise(u * 33.0f + 3.8f, v * 33.0f + 4.6f);
+
+                var grain = n1 * 0.60f + n2 * 0.30f + n3 * 0.10f;
+                var shade = Mathf.Lerp(0.68f, 1.22f, grain);
+
+                if (n3 > 0.78f) shade *= 0.78f;      // 深色土粒
+                else if (n3 < 0.16f) shade *= 1.10f; // 淺色細粒
+
+                var c = baseColor * shade;
+                c.r = Mathf.Clamp01(c.r);
+                c.g = Mathf.Clamp01(c.g);
+                c.b = Mathf.Clamp01(c.b);
+                c.a = 1;
+
+                _runtimeGroundTexture.SetPixel(x, y, c);
+            }
         }
 
-        _runtimeGroundSolidTexture.SetPixel(0, 0, color);
-        _runtimeGroundSolidTexture.Apply(false, false);
-        return _runtimeGroundSolidTexture;
+        _runtimeGroundTexture.Apply(false, false);
+        return _runtimeGroundTexture;
     }
 
     Material CreateGrassMaterial()
